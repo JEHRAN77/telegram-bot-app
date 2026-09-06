@@ -4,8 +4,181 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>ভিডিও টপিক</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="style.css">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f0f;
+            color: #ffffff;
+            min-height: 100vh;
+        }
+        #app {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 16px;
+            padding-bottom: 80px;
+        }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid #272727;
+            margin-bottom: 16px;
+        }
+        header h1 {
+            font-size: 20px;
+            font-weight: 700;
+            color: #ffffff;
+        }
+        #user-info {
+            font-size: 14px;
+            color: #aaaaaa;
+        }
+        #loading {
+            text-align: center;
+            padding: 40px;
+            color: #888;
+            font-size: 16px;
+        }
+        #topic-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        .topic-card {
+            background: #1a1a1a;
+            border-radius: 12px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: transform 0.2s;
+            border: 1px solid #272727;
+        }
+        .topic-card:active {
+            transform: scale(0.97);
+        }
+        .topic-card .topic-info {
+            padding: 10px 12px;
+        }
+        .topic-card .topic-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #fff;
+            line-height: 1.3;
+            display: -webkit-box;
+            line-clamp: 2;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .topic-card .topic-meta {
+            font-size: 12px;
+            color: #888;
+            margin-top: 4px;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            padding: 20px;
+        }
+        .modal.show {
+            display: flex;
+        }
+        .modal-content {
+            background: #1a1a1a;
+            border-radius: 16px;
+            padding: 24px;
+            max-width: 400px;
+            width: 100%;
+            border: 1px solid #272727;
+            position: relative;
+        }
+        .close-btn {
+            position: absolute;
+            top: 12px;
+            right: 16px;
+            font-size: 24px;
+            color: #888;
+            cursor: pointer;
+        }
+        .close-btn:hover {
+            color: #fff;
+        }
+        .modal-content h2 {
+            font-size: 20px;
+            margin-bottom: 8px;
+            color: #fff;
+        }
+        .modal-content p {
+            color: #aaa;
+            font-size: 14px;
+            margin-bottom: 16px;
+            line-height: 1.6;
+        }
+        .btn-primary {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            color: #fff;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .btn-primary:active {
+            transform: scale(0.97);
+        }
+        .btn-primary:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .btn-primary.watch-ad {
+            background: #dc2626;
+        }
+        .btn-primary.watch-ad:active {
+            background: #b91c1c;
+        }
+        .btn-primary.unlocked {
+            background: #22c55e;
+        }
+        .btn-primary.unlocked:active {
+            background: #16a34a;
+        }
+        .hidden {
+            display: none !important;
+        }
+        @media (max-width: 480px) {
+            #topic-grid {
+                grid-template-columns: 1fr 1fr;
+                gap: 10px;
+            }
+            .topic-card .topic-title {
+                font-size: 12px;
+            }
+            header h1 {
+                font-size: 17px;
+            }
+            .modal-content {
+                padding: 16px;
+            }
+            .btn-primary {
+                padding: 12px;
+                font-size: 14px;
+            }
+        }
+    </style>
 </head>
 <body>
     <div id="app">
@@ -26,11 +199,211 @@
             </div>
         </div>
     </div>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
-        // ডিরেক্ট টেস্ট
-        console.log('App started');
-        document.getElementById('loading').textContent = '⏳ লোড হচ্ছে...';
+        (function() {
+            'use strict';
+            
+            console.log('App started (inline)');
+            
+            var Telegram = null;
+            try {
+                Telegram = window.Telegram.WebApp;
+                if (Telegram) {
+                    Telegram.ready();
+                    console.log('Telegram WebApp ready');
+                }
+            } catch (e) {
+                console.log('Telegram WebApp not available');
+            }
+
+            var API_BASE = '/api';
+            var topics = [];
+            var userData = null;
+            var currentTopic = null;
+
+            function getUserId() {
+                try {
+                    if (Telegram && Telegram.initDataUnsafe && Telegram.initDataUnsafe.user) {
+                        return Telegram.initDataUnsafe.user.id;
+                    }
+                    return null;
+                } catch (e) {
+                    return null;
+                }
+            }
+
+            function getUserName() {
+                try {
+                    if (Telegram && Telegram.initDataUnsafe && Telegram.initDataUnsafe.user) {
+                        return Telegram.initDataUnsafe.user.first_name || 'ইউজার';
+                    }
+                    return 'ইউজার';
+                } catch (e) {
+                    return 'ইউজার';
+                }
+            }
+
+            function renderTopics() {
+                var grid = document.getElementById('topic-grid');
+                var loading = document.getElementById('loading');
+                
+                if (!topics || topics.length === 0) {
+                    loading.textContent = '📭 এখনো কোনো টপিক যোগ করা হয়নি';
+                    return;
+                }
+                
+                loading.style.display = 'none';
+                grid.innerHTML = '';
+                
+                var isUnlocked = userData && userData.verified === true;
+                
+                topics.forEach(function(topic) {
+                    var card = document.createElement('div');
+                    card.className = 'topic-card';
+                    var videoCount = topic.videoCount || (topic.videos ? topic.videos.length : 0);
+                    
+                    card.innerHTML = `
+                        <div style="position:relative; background:#2a2a2a; aspect-ratio:16/9; display:flex; align-items:center; justify-content:center; font-size:40px; overflow:hidden;">
+                            📹
+                            <div style="position:absolute; top:8px; right:8px; background:rgba(0,0,0,0.7); border-radius:50%; width:28px; height:28px; display:flex; align-items:center; justify-content:center; font-size:14px; color:white;">
+                                ${isUnlocked ? '🔓' : '🔒'}
+                            </div>
+                            <div style="position:absolute; bottom:8px; left:8px; background:rgba(0,0,0,0.7); border-radius:4px; padding:2px 8px; font-size:11px; color:#fff;">
+                                📹 ${videoCount}
+                            </div>
+                        </div>
+                        <div style="padding:10px 12px;">
+                            <div style="font-size:14px; font-weight:600; color:#fff;">${topic.title || 'নামবিহীন টপিক'}</div>
+                            <div style="font-size:12px; color:#888; margin-top:4px;">🔢 ${topic.adsRequired || 0}টি অ্যাড দেখে আনলক করুন</div>
+                        </div>
+                    `;
+                    
+                    card.addEventListener('click', function() {
+                        openTopic(topic);
+                    });
+                    grid.appendChild(card);
+                });
+            }
+
+            function openTopic(topic) {
+                currentTopic = topic;
+                var modal = document.getElementById('modal');
+                var title = document.getElementById('modal-title');
+                var description = document.getElementById('modal-description');
+                var actionBtn = document.getElementById('modal-action-btn');
+                
+                title.textContent = topic.title || 'টপিক';
+                var videoCount = topic.videoCount || (topic.videos ? topic.videos.length : 0);
+                var adsRequired = topic.adsRequired || 0;
+                
+                description.innerHTML = `
+                    📹 ${videoCount}টি ভিডিও<br>
+                    🔢 ${adsRequired}টি অ্যাড দেখে আনলক করুন
+                `;
+                
+                var isUnlocked = userData && userData.verified === true;
+                
+                if (isUnlocked) {
+                    actionBtn.textContent = '✅ আনলক করা আছে';
+                    actionBtn.className = 'btn-primary unlocked';
+                    actionBtn.disabled = true;
+                    actionBtn.style.background = '#22c55e';
+                    actionBtn.style.color = '#fff';
+                } else {
+                    actionBtn.textContent = '🎬 ' + adsRequired + 'টি অ্যাড দেখে আনলক করুন';
+                    actionBtn.className = 'btn-primary watch-ad';
+                    actionBtn.disabled = false;
+                    actionBtn.style.background = '#dc2626';
+                    actionBtn.style.color = '#fff';
+                    actionBtn.onclick = function() {
+                        watchAd(topic);
+                    };
+                }
+                
+                modal.classList.add('show');
+            }
+
+            function watchAd(topic) {
+                var adsRequired = topic.adsRequired || 0;
+                var adsWatched = 0;
+                
+                var modal = document.getElementById('modal');
+                var actionBtn = document.getElementById('modal-action-btn');
+                var description = document.getElementById('modal-description');
+                
+                actionBtn.disabled = true;
+                actionBtn.textContent = '⏳ অ্যাড দেখছেন... (0/' + adsRequired + ')';
+                
+                var interval = setInterval(function() {
+                    adsWatched++;
+                    actionBtn.textContent = '⏳ অ্যাড দেখছেন... (' + adsWatched + '/' + adsRequired + ')';
+                    
+                    if (adsWatched >= adsRequired) {
+                        clearInterval(interval);
+                        actionBtn.textContent = '✅ আনলক করা হয়েছে!';
+                        actionBtn.style.background = '#22c55e';
+                        actionBtn.style.color = '#fff';
+                        actionBtn.disabled = true;
+                        description.innerHTML = '🎉 টপিকটি আনলক হয়েছে!<br>📹 সব ভিডিও এখন দেখা যাবে';
+                    }
+                }, 2000);
+            }
+
+            function loadTopics() {
+                fetch(API_BASE + '/topics')
+                    .then(function(response) {
+                        if (!response.ok) throw new Error('Network error');
+                        return response.json();
+                    })
+                    .then(function(data) {
+                        console.log('Topics loaded:', data.length);
+                        topics = data;
+                        renderTopics();
+                    })
+                    .catch(function(error) {
+                        console.error('Error loading topics:', error);
+                        document.getElementById('loading').textContent = '❌ টপিক লোড করতে সমস্যা হয়েছে';
+                    });
+            }
+
+            function loadUserStatus() {
+                var userId = getUserId();
+                if (!userId) {
+                    console.log('No user ID found');
+                    return;
+                }
+                fetch(API_BASE + '/users/verify/' + userId)
+                    .then(function(response) { return response.json(); })
+                    .then(function(data) {
+                        console.log('User data loaded:', data);
+                        userData = data;
+                        renderTopics();
+                    })
+                    .catch(function(error) {
+                        console.error('Error loading user status:', error);
+                    });
+            }
+
+            function init() {
+                var name = getUserName();
+                document.getElementById('user-name').textContent = name;
+                loadTopics();
+                loadUserStatus();
+            }
+
+            document.querySelector('.close-btn').addEventListener('click', function() {
+                document.getElementById('modal').classList.remove('show');
+            });
+
+            document.getElementById('modal').addEventListener('click', function(e) {
+                if (e.target === e.currentTarget) {
+                    document.getElementById('modal').classList.remove('show');
+                }
+            });
+
+            setTimeout(init, 100);
+        })();
     </script>
-    <script src="app.js"></script>
 </body>
 </html>
