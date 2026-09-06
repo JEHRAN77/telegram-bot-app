@@ -578,6 +578,16 @@ app.get('/api/topics', async (req, res) => {
   }
 });
 
+app.get('/api/thumbnail/:fileId', async (req, res) => {
+  try {
+    const fileId = req.params.fileId;
+    const fileLink = await bot.telegram.getFileLink(fileId);
+    res.redirect(fileLink);
+  } catch (error) {
+    res.status(404).json({ error: 'Thumbnail not found' });
+  }
+});
+
 bot.launch()
   .then(() => console.log('🤖 Bot started successfully'))
   .catch(err => console.error('❌ Bot start error:', err));

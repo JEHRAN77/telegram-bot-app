@@ -47,6 +47,16 @@ async function loadUserStatus() {
     }
 }
 
+function getThumbnailUrl(topic) {
+    if (topic.thumbnail) {
+        return `${API_BASE}/thumbnail/${topic.thumbnail}`;
+    }
+    if (topic.thumbnails && topic.thumbnails.length > 0) {
+        return `${API_BASE}/thumbnail/${topic.thumbnails[0]}`;
+    }
+    return null;
+}
+
 function renderTopics() {
     const grid = document.getElementById('topic-grid');
     const loading = document.getElementById('loading');
@@ -64,18 +74,11 @@ function renderTopics() {
         card.className = 'topic-card';
         
         const isUnlocked = userData?.verified === true;
-        
-        let thumbnailHtml = '';
-        if (topic.thumbnail || topic.thumbnails) {
-            const thumb = topic.thumbnail || (topic.thumbnails && topic.thumbnails[0]);
-            if (thumb) {
-                thumbnailHtml = `<img src="https://via.placeholder.com/300x169/2a2a2a/888?text=${encodeURIComponent(topic.title?.charAt(0) || '📹')}" alt="${topic.title || 'টপিক'}">`;
-            }
-        }
+        const thumbUrl = getThumbnailUrl(topic);
         
         card.innerHTML = `
             <div class="thumbnail">
-                ${thumbnailHtml || `<span style="font-size:40px;">📹</span>`}
+                ${thumbUrl ? `<img src="${thumbUrl}" alt="${topic.title || 'টপিক'}" onerror="this.style.display='none';this.parentElement.innerHTML='<span style=\\'font-size:40px;\\'>📹</span>'">` : '<span style="font-size:40px;">📹</span>'}
                 <div class="lock-icon ${isUnlocked ? 'unlocked' : ''}">
                     ${isUnlocked ? '🔓' : '🔒'}
                 </div>
