@@ -11,7 +11,7 @@ app.use(express.json());
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-const serviceAccount = require('./telegram-bot-project-ddb4e-firebase-adminsdk-fbsvc-ac1eb43e9c.json');
+const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
