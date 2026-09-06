@@ -24,6 +24,7 @@ console.log('✅ Firebase Connected');
 const REQUIRED_CHANNELS = process.env.REQUIRED_CHANNELS.split(',').map(id => id.trim());
 const STORAGE_CHANNEL = process.env.STORAGE_CHANNEL;
 const ADMIN_ID = parseInt(process.env.ADMIN_USER_ID);
+const MINI_APP_URL = 'https://telegram-bot-app-24ti.onrender.com';
 
 let broadcastData = {};
 
@@ -113,7 +114,7 @@ bot.start(async (ctx) => {
       return ctx.reply(
         '🎉 আপনি ইতিমধ্যে যাচাইকৃত!',
         Markup.inlineKeyboard([
-          Markup.button.webApp('🚀 Open App', 'https://your-mini-app-url.com')
+          Markup.button.webApp('🚀 Open App', MINI_APP_URL)
         ])
       );
     }
@@ -123,7 +124,7 @@ bot.start(async (ctx) => {
       return ctx.reply(
         '✅ যাচাই সফল!',
         Markup.inlineKeyboard([
-          Markup.button.webApp('🚀 Open App', 'https://your-mini-app-url.com')
+          Markup.button.webApp('🚀 Open App', MINI_APP_URL)
         ])
       );
     }
@@ -164,7 +165,7 @@ bot.action('verify_join', async (ctx) => {
       await ctx.reply(
         '✅ যাচাই সফল!',
         Markup.inlineKeyboard([
-          Markup.button.webApp('🚀 Open App', 'https://your-mini-app-url.com')
+          Markup.button.webApp('🚀 Open App', MINI_APP_URL)
         ])
       );
       try {
