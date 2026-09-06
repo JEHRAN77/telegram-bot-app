@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>ভিডিও টপিক</title>
-    <script src="//libtl.com/sdk.js" data-zone="11737734" data-sdk="show_11737734"></script>
     <style>
         * {
             margin: 0;
@@ -167,39 +166,6 @@
             color: #f87171;
             margin-top: 2px;
         }
-        #ad-overlay {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            z-index: 9999;
-            background: #000;
-            justify-content: center;
-            align-items: center;
-        }
-        #ad-overlay.show {
-            display: flex;
-        }
-        #ad-overlay .close-ad {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            color: #fff;
-            background: rgba(255,0,0,0.7);
-            border: none;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            font-size: 20px;
-            cursor: pointer;
-            z-index: 10000;
-            display: none;
-        }
-        #ad-overlay .close-ad.show {
-            display: block;
-        }
         .hidden {
             display: none !important;
         }
@@ -232,20 +198,12 @@
         <div id="loading">⏳ লোড হচ্ছে...</div>
         <div id="topic-grid"></div>
     </div>
-
-    <div id="ad-overlay">
-        <button class="close-ad" id="closeAdBtn">✕</button>
-        <div id="ad-container" style="width:100%; height:100%; display:flex; justify-content:center; align-items:center;">
-            <div id="ad-content" style="width:100%; height:100%;"></div>
-        </div>
-    </div>
-
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
         (function() {
             'use strict';
             
-            console.log('App started');
+            console.log('App started - Simulation Mode');
             
             var Telegram = null;
             try {
@@ -263,10 +221,6 @@
             var unlockedTopics = {};
             var isAdWatching = false;
             var adTimers = {};
-            var currentAdTopic = null;
-            var currentAdBtn = null;
-            var adWatchedCount = 0;
-            var adTotalRequired = 0;
 
             function getUserId() {
                 try {
@@ -419,88 +373,35 @@
                 }
             }
 
-            function showAd() {
-                var overlay = document.getElementById('ad-overlay');
-                var closeBtn = document.getElementById('closeAdBtn');
-                
-                overlay.classList.add('show');
-                
-                try {
-                    if (typeof ShowAd !== 'undefined') {
-                        ShowAd({
-                            zoneId: 11737734,
-                            type: 'interstitial',
-                            onAdClosed: function() {
-                                console.log('Ad closed');
-                                overlay.classList.remove('show');
-                                
-                                adWatchedCount++;
-                                updateAdProgress();
-                                
-                                if (adWatchedCount >= adTotalRequired) {
-                                    if (currentAdTopic && currentAdBtn) {
-                                        unlockTopic(currentAdTopic, currentAdBtn);
-                                    }
-                                } else {
-                                    showAd();
-                                }
-                            }
-                        });
-                    } else {
-                        console.log('Monetag SDK not loaded, using simulation');
-                        overlay.classList.remove('show');
-                        simulationAd();
-                    }
-                } catch (error) {
-                    console.error('Ad error:', error);
-                    overlay.classList.remove('show');
-                    simulationAd();
-                }
-            }
-
-            function simulationAd() {
-                adWatchedCount++;
-                updateAdProgress();
-                
-                if (adWatchedCount >= adTotalRequired) {
-                    if (currentAdTopic && currentAdBtn) {
-                        unlockTopic(currentAdTopic, currentAdBtn);
-                    }
-                } else {
-                    setTimeout(function() {
-                        showAd();
-                    }, 1000);
-                }
-            }
-
-            function updateAdProgress() {
-                var progressEl = document.getElementById('progress-' + (currentAdTopic ? currentAdTopic.id : ''));
-                if (progressEl) {
-                    progressEl.textContent = 'প্রগ্রেস: ' + adWatchedCount + '/' + adTotalRequired;
-                }
-            }
-
             function startWatchingAd(topic, btnElement) {
                 if (isAdWatching) return;
+                if (adTimers[topic.id]) return;
                 
-                currentAdTopic = topic;
-                currentAdBtn = btnElement;
-                adTotalRequired = topic.adsRequired || 0;
-                adWatchedCount = 0;
+                var totalAds = topic.adsRequired || 0;
+                var adsWatched = 0;
                 isAdWatching = true;
                 
                 btnElement.disabled = true;
                 btnElement.className = 'btn-ad watching';
-                btnElement.textContent = '⏳ অ্যাড দেখছেন...';
+                btnElement.textContent = '⏳ অ্যাড দেখছেন... (সিমুলেশন)';
                 
                 var progressEl = document.getElementById('progress-' + topic.id);
                 if (progressEl) {
-                    progressEl.textContent = 'প্রগ্রেস: 0/' + adTotalRequired;
+                    progressEl.textContent = 'প্রগ্রেস: 0/' + totalAds;
                 }
                 
-                setTimeout(function() {
-                    showAd();
-                }, 500);
+                adTimers[topic.id] = setInterval(function() {
+                    adsWatched++;
+                    if (progressEl) {
+                        progressEl.textContent = 'প্রগ্রেস: ' + adsWatched + '/' + totalAds;
+                    }
+                    
+                    if (adsWatched >= totalAds) {
+                        clearInterval(adTimers[topic.id]);
+                        delete adTimers[topic.id];
+                        unlockTopic(topic, btnElement);
+                    }
+                }, 2000);
             }
 
             function loadUnlockedStatus() {
@@ -554,16 +455,7 @@
                 loadTopics();
             }
 
-            document.getElementById('closeAdBtn').addEventListener('click', function() {
-                document.getElementById('ad-overlay').classList.remove('show');
-                isAdWatching = false;
-                if (currentAdBtn) {
-                    currentAdBtn.disabled = false;
-                    currentAdBtn.className = 'btn-ad watch';
-                    currentAdBtn.textContent = '🎬 ' + adTotalRequired + 'টি অ্যাড দেখে আনলক করুন';
-                }
-            });
-
+            // প্রতি 60 সেকেন্ড পর পর রিফ্রেশ
             setInterval(function() {
                 loadUnlockedStatus();
             }, 60000);
