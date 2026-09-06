@@ -30,6 +30,9 @@ const MINI_APP_URL = 'https://telegram-bot-app-24ti.onrender.com';
 let addTopicData = {};
 let addVideoData = {};
 
+// Broadcast system - temporary storage
+const broadcastSessions = {};
+
 async function getOrCreateUser(userId, username, firstName, lastName) {
   try {
     const userRef = db.collection('users').doc(userId.toString());
@@ -320,6 +323,29 @@ bot.on('text', async (ctx) => {
       return;
     }
   }
+  
+  // Broadcast handling
+  if (broadcastSessions[userId]) {
+    const session = broadcastSessions[userId];
+    if (session.step === 'message') {
+      session.message = text;
+      session.step = 'confirm';
+      await ctx.reply(
+        `📨 আপনার ব্রডকাস্ট মেসেজ:\n\n"${text}"\n\n✅ পাঠাতে চান? "হ্যাঁ" লিখুন অথবা "না" লিখুন বাতিল করতে।`
+      );
+      return;
+    }
+    if (session.step === 'confirm') {
+      if (text.toLowerCase() === 'হ্যাঁ' || text.toLowerCase() === 'yes') {
+        await startBroadcast(ctx, session.message);
+        delete broadcastSessions[userId];
+      } else {
+        await ctx.reply('❌ ব্রডকাস্ট বাতিল করা হয়েছে।');
+        delete broadcastSessions[userId];
+      }
+      return;
+    }
+  }
 });
 
 bot.on('photo', async (ctx) => {
@@ -435,6 +461,55 @@ bot.command('deletetopic', async (ctx) => {
     await ctx.reply('❌ টপিক ডিলিট করতে সমস্যা হয়েছে।');
   }
 });
+
+bot.command('broadcast', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) {
+    return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+  }
+  broadcastSessions[ctx.from.id] = { step: 'message' };
+  await ctx.reply('📢 আপনি যে মেসেজটি সবাইকে পাঠাতে চান তা লিখুন:');
+});
+
+async function startBroadcast(ctx, message) {
+  try {
+    await ctx.reply('⏳ ব্রডকাস্ট প্রস্তুত হচ্ছে...');
+    
+    const snapshot = await db.collection('users').where('verified', '==', true).get();
+    const users = snapshot.docs.map(doc => doc.data());
+    
+    if (users.length === 0) {
+      return ctx.reply('📭 কোনো যাচাইকৃত ইউজার নেই।');
+    }
+    
+    await ctx.reply(`📨 ব্রডকাস্ট শুরু হচ্ছে... ${users.length} জন ইউজারকে পাঠানো হবে।`);
+    
+    let success = 0;
+    let failed = 0;
+    
+    for (let i = 0; i < users.length; i++) {
+      try {
+        await bot.telegram.sendMessage(users[i].userId, message);
+        success++;
+      } catch (error) {
+        failed++;
+        console.error(`Failed to send to ${users[i].userId}:`, error.message);
+      }
+      if ((i + 1) % 30 === 0) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    
+    await ctx.reply(
+      `✅ ব্রডকাস্ট শেষ!\n\n` +
+      `✅ সফল: ${success}\n` +
+      `❌ ব্যর্থ: ${failed}\n` +
+      `👥 মোট: ${users.length}`
+    );
+  } catch (error) {
+    console.error('Error in broadcast:', error);
+    await ctx.reply('❌ ব্রডকাস্ট করতে সমস্যা হয়েছে।');
+  }
+}
 
 bot.command('admin', async (ctx) => {
   try {
