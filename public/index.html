@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>ভিডিও টপিক</title>
+    <script src="https://cdn.adsgram.ai/js/adsgram.js"></script>
     <style>
         * {
             margin: 0;
@@ -109,9 +110,11 @@
             color: #fff;
             line-height: 1.3;
             display: -webkit-box;
+            display: -webkit-box;
             -webkit-line-clamp: 2;
             line-clamp: 2;
             -webkit-box-orient: vertical;
+            box-orient: vertical;
             overflow: hidden;
         }
         .topic-meta {
@@ -162,6 +165,16 @@
             text-align: center;
             margin-top: 6px;
         }
+        #ad-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 9999;
+            background: #000;
+            display: none;
+        }
         @media (max-width: 480px) {
             #topic-grid {
                 grid-template-columns: 1fr 1fr;
@@ -191,6 +204,7 @@
         <div id="loading">⏳ লোড হচ্ছে...</div>
         <div id="topic-grid"></div>
     </div>
+    <div id="ad-container"></div>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
         (function() {
@@ -212,8 +226,9 @@
             var API_BASE = '/api';
             var topics = [];
             var userData = null;
-            var adTimers = {};
             var unlockedTopics = {};
+            var isAdWatching = false;
+            var ADSGRAM_BLOCK_ID = 46430;
 
             function getUserId() {
                 try {
@@ -316,68 +331,120 @@
                 });
             }
 
-            function startWatchingAd(topic, btnElement) {
-                if (adTimers[topic.id]) {
-                    return;
+            function unlockTopic(topic, btnElement) {
+                unlockedTopics[topic.id] = true;
+                
+                btnElement.textContent = '✅ আনলক করা আছে';
+                btnElement.className = 'btn-ad unlocked';
+                btnElement.disabled = true;
+                
+                var progressEl = document.getElementById('progress-' + topic.id);
+                if (progressEl) {
+                    progressEl.textContent = '🎉 টপিকটি আনলক হয়েছে!';
                 }
                 
-                var adsRequired = topic.adsRequired || 0;
+                isAdWatching = false;
+                
+                var userId = getUserId();
+                if (userId) {
+                    fetch(API_BASE + '/unlock-topic', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            userId: userId,
+                            topicId: topic.id
+                        })
+                    }).then(function(response) {
+                        return response.json();
+                    }).then(function(data) {
+                        console.log('Unlock response:', data);
+                    }).catch(function(err) {
+                        console.error('Unlock error:', err);
+                    });
+                }
+                
+                var card = btnElement.closest('.topic-card');
+                var lockIcon = card.querySelector('.lock-icon');
+                if (lockIcon) {
+                    lockIcon.textContent = '🔓';
+                    lockIcon.className = 'lock-icon unlocked';
+                }
+            }
+
+            function startWatchingAd(topic, btnElement) {
+                if (isAdWatching) return;
+                
+                var totalAds = topic.adsRequired || 0;
                 var adsWatched = 0;
-                var progressEl = document.getElementById('progress-' + topic.id);
+                isAdWatching = true;
                 
                 btnElement.disabled = true;
                 btnElement.className = 'btn-ad watching';
                 btnElement.textContent = '⏳ অ্যাড দেখছেন...';
                 
-                progressEl.textContent = 'প্রগ্রেস: 0/' + adsRequired;
+                var progressEl = document.getElementById('progress-' + topic.id);
+                if (progressEl) {
+                    progressEl.textContent = 'প্রগ্রেস: 0/' + totalAds;
+                }
                 
-                adTimers[topic.id] = setInterval(function() {
-                    adsWatched++;
-                    progressEl.textContent = 'প্রগ্রেস: ' + adsWatched + '/' + adsRequired;
-                    
-                    if (adsWatched >= adsRequired) {
-                        clearInterval(adTimers[topic.id]);
-                        delete adTimers[topic.id];
-                        
-                        unlockedTopics[topic.id] = true;
-                        
-                        btnElement.textContent = '✅ আনলক করা আছে';
-                        btnElement.className = 'btn-ad unlocked';
-                        btnElement.disabled = true;
-                        progressEl.textContent = '🎉 টপিকটি আনলক হয়েছে!';
-                        
-                        var userId = getUserId();
-                        if (userId) {
-                            fetch(API_BASE + '/unlock-topic', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                    userId: userId,
-                                    topicId: topic.id
-                                })
-                            }).then(function(response) {
-                                return response.json();
-                            }).then(function(data) {
-                                console.log('Unlock response:', data);
-                            }).catch(function(err) {
-                                console.error('Unlock error:', err);
-                            });
+                var adContainer = document.getElementById('ad-container');
+                adContainer.style.display = 'block';
+                
+                function showNextAd() {
+                    try {
+                        var adController = Adsgram.showAd({
+                            blockId: ADSGRAM_BLOCK_ID,
+                            container: adContainer,
+                            onClose: function() {
+                                console.log('Ad closed');
+                            },
+                            onReward: function() {
+                                adsWatched++;
+                                adContainer.style.display = 'none';
+                                if (progressEl) {
+                                    progressEl.textContent = 'প্রগ্রেস: ' + adsWatched + '/' + totalAds;
+                                }
+                                
+                                if (adsWatched >= totalAds) {
+                                    unlockTopic(topic, btnElement);
+                                } else {
+                                    setTimeout(function() {
+                                        adContainer.style.display = 'block';
+                                        showNextAd();
+                                    }, 500);
+                                }
+                            },
+                            onError: function(error) {
+                                console.error('Ad error:', error);
+                                adContainer.style.display = 'none';
+                                btnElement.disabled = false;
+                                btnElement.className = 'btn-ad watch';
+                                btnElement.textContent = '🎬 ' + totalAds + 'টি অ্যাড দেখে আনলক করুন';
+                                if (progressEl) {
+                                    progressEl.textContent = '❌ অ্যাড লোড করতে সমস্যা হয়েছে। আবার চেষ্টা করুন।';
+                                }
+                                isAdWatching = false;
+                            }
+                        });
+                    } catch (error) {
+                        console.error('Adsgram init error:', error);
+                        adContainer.style.display = 'none';
+                        btnElement.disabled = false;
+                        btnElement.className = 'btn-ad watch';
+                        btnElement.textContent = '🎬 ' + totalAds + 'টি অ্যাড দেখে আনলক করুন';
+                        if (progressEl) {
+                            progressEl.textContent = '❌ অ্যাড লোড করতে সমস্যা হয়েছে';
                         }
-                        
-                        var card = btnElement.closest('.topic-card');
-                        var lockIcon = card.querySelector('.lock-icon');
-                        if (lockIcon) {
-                            lockIcon.textContent = '🔓';
-                            lockIcon.className = 'lock-icon unlocked';
-                        }
+                        isAdWatching = false;
                     }
-                }, 2000);
+                }
+                
+                showNextAd();
             }
 
             function loadUnlockedStatus() {
                 var userId = getUserId();
                 if (!userId) {
-                    console.log('No user ID found for unlocked status');
                     renderTopics();
                     return;
                 }
@@ -424,7 +491,6 @@
             function loadUserStatus() {
                 var userId = getUserId();
                 if (!userId) {
-                    console.log('No user ID found');
                     return;
                 }
                 fetch(API_BASE + '/users/verify/' + userId)
