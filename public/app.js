@@ -1,7 +1,7 @@
 const Telegram = window.Telegram.WebApp;
 Telegram.ready();
 
-const API_BASE = 'https://telegram-bot-app-24ti.onrender.com/api';
+const API_BASE = '/api';
 
 let topics = [];
 let userData = null;
@@ -24,11 +24,14 @@ async function init() {
 async function loadTopics() {
     try {
         const response = await fetch(`${API_BASE}/topics`);
-        topics = await response.json();
+        if (!response.ok) throw new Error('Network error');
+        const data = await response.json();
+        console.log('Topics data:', data);
+        topics = data;
         renderTopics();
     } catch (error) {
         console.error('Error loading topics:', error);
-        document.getElementById('loading').textContent = '❌ টপিক লোড করতে সমস্যা হয়েছে';
+        document.getElementById('loading').textContent = '❌ টপিক লোড করতে সমস্যা হয়েছে: ' + error.message;
     }
 }
 
@@ -38,6 +41,7 @@ async function loadUserStatus() {
         if (!userId) return;
         const response = await fetch(`${API_BASE}/users/verify/${userId}`);
         userData = await response.json();
+        console.log('User data:', userData);
     } catch (error) {
         console.error('Error loading user status:', error);
     }
@@ -59,18 +63,26 @@ function renderTopics() {
         const card = document.createElement('div');
         card.className = 'topic-card';
         
-        const isUnlocked = userData?.verified && true;
+        const isUnlocked = userData?.verified === true;
+        
+        let thumbnailHtml = '';
+        if (topic.thumbnail || topic.thumbnails) {
+            const thumb = topic.thumbnail || (topic.thumbnails && topic.thumbnails[0]);
+            if (thumb) {
+                thumbnailHtml = `<img src="https://via.placeholder.com/300x169/2a2a2a/888?text=${encodeURIComponent(topic.title?.charAt(0) || '📹')}" alt="${topic.title || 'টপিক'}">`;
+            }
+        }
         
         card.innerHTML = `
             <div class="thumbnail">
-                <img src="https://via.placeholder.com/300x169/2a2a2a/888?text=${encodeURIComponent(topic.title?.charAt(0) || '📹')}" alt="${topic.title || 'টপিক'}">
+                ${thumbnailHtml || `<span style="font-size:40px;">📹</span>`}
                 <div class="lock-icon ${isUnlocked ? 'unlocked' : ''}">
                     ${isUnlocked ? '🔓' : '🔒'}
                 </div>
             </div>
             <div class="topic-info">
                 <div class="topic-title">${topic.title || 'নামবিহীন টপিক'}</div>
-                <div class="topic-meta">📹 ${topic.videoCount || 0}টি ভিডিও • 🔢 ${topic.adsRequired || 0}টি অ্যাড</div>
+                <div class="topic-meta">📹 ${topic.videoCount || (topic.videos ? topic.videos.length : 0)}টি ভিডিও • 🔢 ${topic.adsRequired || 0}টি অ্যাড</div>
             </div>
         `;
         
@@ -87,12 +99,13 @@ function openTopic(topic) {
     const actionBtn = document.getElementById('modal-action-btn');
     
     title.textContent = topic.title || 'টপিক';
+    const videoCount = topic.videoCount || (topic.videos ? topic.videos.length : 0);
     description.innerHTML = `
-        📹 ${topic.videoCount || 0}টি ভিডিও<br>
+        📹 ${videoCount}টি ভিডিও<br>
         🔢 ${topic.adsRequired || 0}টি অ্যাড দেখে আনলক করুন
     `;
     
-    const isUnlocked = userData?.verified && true;
+    const isUnlocked = userData?.verified === true;
     
     if (isUnlocked) {
         actionBtn.textContent = '✅ আনলক করা আছে';
