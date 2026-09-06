@@ -1,7 +1,7 @@
 const Telegram = window.Telegram.WebApp;
 Telegram.ready();
 
-const API_BASE = 'http://localhost:3000/api';
+const API_BASE = 'https://telegram-bot-app-24ti.onrender.com/api';
 
 let topics = [];
 let userData = null;
