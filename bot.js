@@ -588,6 +588,16 @@ app.get('/api/thumbnail/:fileId', async (req, res) => {
   }
 });
 
+app.post('/api/unlock-topic', async (req, res) => {
+  try {
+    const { userId, topicId } = req.body;
+    console.log(`User ${userId} unlocked topic ${topicId}`);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 bot.launch()
   .then(() => console.log('🤖 Bot started successfully'))
   .catch(err => console.error('❌ Bot start error:', err));
