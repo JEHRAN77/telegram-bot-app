@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
 const path = require('path');
+const cron = require('node-cron');
 require('dotenv').config();
 
 const app = express();
@@ -30,9 +31,6 @@ const MINI_APP_URL = 'https://telegram-bot-app-24ti.onrender.com';
 let addTopicData = {};
 let addVideoData = {};
 
-// Broadcast system - temporary storage
-const broadcastSessions = {};
-
 async function getOrCreateUser(userId, username, firstName, lastName) {
   try {
     const userRef = db.collection('users').doc(userId.toString());
@@ -46,9 +44,10 @@ async function getOrCreateUser(userId, username, firstName, lastName) {
         verified: false,
         verifiedAt: null,
         createdAt: new Date().toISOString(),
-        unlockedTopics: []
+        unlockedTopics: [],
+        topicUnlockTime: {}
       });
-      return { userId, username, firstName, lastName, verified: false, unlockedTopics: [] };
+      return { userId, username, firstName, lastName, verified: false, unlockedTopics: [], topicUnlockTime: {} };
     }
     return { id: doc.id, ...doc.data() };
   } catch (error) {
@@ -323,29 +322,6 @@ bot.on('text', async (ctx) => {
       return;
     }
   }
-  
-  // Broadcast handling
-  if (broadcastSessions[userId]) {
-    const session = broadcastSessions[userId];
-    if (session.step === 'message') {
-      session.message = text;
-      session.step = 'confirm';
-      await ctx.reply(
-        `📨 আপনার ব্রডকাস্ট মেসেজ:\n\n"${text}"\n\n✅ পাঠাতে চান? "হ্যাঁ" লিখুন অথবা "না" লিখুন বাতিল করতে।`
-      );
-      return;
-    }
-    if (session.step === 'confirm') {
-      if (text.toLowerCase() === 'হ্যাঁ' || text.toLowerCase() === 'yes') {
-        await startBroadcast(ctx, session.message);
-        delete broadcastSessions[userId];
-      } else {
-        await ctx.reply('❌ ব্রডকাস্ট বাতিল করা হয়েছে।');
-        delete broadcastSessions[userId];
-      }
-      return;
-    }
-  }
 });
 
 bot.on('photo', async (ctx) => {
@@ -462,55 +438,6 @@ bot.command('deletetopic', async (ctx) => {
   }
 });
 
-bot.command('broadcast', async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) {
-    return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
-  }
-  broadcastSessions[ctx.from.id] = { step: 'message' };
-  await ctx.reply('📢 আপনি যে মেসেজটি সবাইকে পাঠাতে চান তা লিখুন:');
-});
-
-async function startBroadcast(ctx, message) {
-  try {
-    await ctx.reply('⏳ ব্রডকাস্ট প্রস্তুত হচ্ছে...');
-    
-    const snapshot = await db.collection('users').where('verified', '==', true).get();
-    const users = snapshot.docs.map(doc => doc.data());
-    
-    if (users.length === 0) {
-      return ctx.reply('📭 কোনো যাচাইকৃত ইউজার নেই।');
-    }
-    
-    await ctx.reply(`📨 ব্রডকাস্ট শুরু হচ্ছে... ${users.length} জন ইউজারকে পাঠানো হবে।`);
-    
-    let success = 0;
-    let failed = 0;
-    
-    for (let i = 0; i < users.length; i++) {
-      try {
-        await bot.telegram.sendMessage(users[i].userId, message);
-        success++;
-      } catch (error) {
-        failed++;
-        console.error(`Failed to send to ${users[i].userId}:`, error.message);
-      }
-      if ((i + 1) % 30 === 0) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-    }
-    
-    await ctx.reply(
-      `✅ ব্রডকাস্ট শেষ!\n\n` +
-      `✅ সফল: ${success}\n` +
-      `❌ ব্যর্থ: ${failed}\n` +
-      `👥 মোট: ${users.length}`
-    );
-  } catch (error) {
-    console.error('Error in broadcast:', error);
-    await ctx.reply('❌ ব্রডকাস্ট করতে সমস্যা হয়েছে।');
-  }
-}
-
 bot.command('admin', async (ctx) => {
   try {
     if (ctx.from.id !== ADMIN_ID) {
@@ -605,7 +532,17 @@ app.get('/api/user-unlocked/:userId', async (req, res) => {
     
     const data = doc.data();
     const unlockedTopics = data.unlockedTopics || [];
-    res.json({ topics: unlockedTopics });
+    const topicUnlockTime = data.topicUnlockTime || {};
+    const now = Date.now();
+    const THIRTY_MINUTES = 30 * 60 * 1000;
+    
+    const activeUnlocked = unlockedTopics.filter(topicId => {
+      const unlockTime = topicUnlockTime[topicId];
+      if (!unlockTime) return false;
+      return (now - unlockTime) < THIRTY_MINUTES;
+    });
+    
+    res.json({ topics: activeUnlocked });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -620,22 +557,89 @@ app.post('/api/unlock-topic', async (req, res) => {
     const doc = await userRef.get();
     
     let unlockedTopics = [];
+    let topicUnlockTime = {};
     if (doc.exists) {
       const data = doc.data();
       unlockedTopics = data.unlockedTopics || [];
+      topicUnlockTime = data.topicUnlockTime || {};
     }
     
-    if (!unlockedTopics.includes(topicId)) {
-      unlockedTopics.push(topicId);
+    const now = Date.now();
+    const THIRTY_MINUTES = 30 * 60 * 1000;
+    
+    const activeUnlocked = unlockedTopics.filter(id => {
+      const time = topicUnlockTime[id];
+      return time && (now - time) < THIRTY_MINUTES;
+    });
+    
+    if (!activeUnlocked.includes(topicId)) {
+      activeUnlocked.push(topicId);
+      topicUnlockTime[topicId] = now;
     }
     
     await userRef.set({
-      unlockedTopics: unlockedTopics
+      unlockedTopics: activeUnlocked,
+      topicUnlockTime: topicUnlockTime
     }, { merge: true });
     
-    res.json({ success: true });
+    const topicRef = db.collection('topics').doc(topicId);
+    const topicDoc = await topicRef.get();
+    
+    let videosDelivered = 0;
+    if (topicDoc.exists) {
+      const topicData = topicDoc.data();
+      const videos = topicData.videos || [];
+      
+      for (const videoId of videos) {
+        try {
+          await bot.telegram.sendVideo(userId, videoId, {
+            protect_content: true
+          });
+          videosDelivered++;
+        } catch (sendError) {
+          console.error(`Error sending video ${videoId} to user ${userId}:`, sendError.message);
+        }
+      }
+    }
+    
+    res.json({ success: true, videosDelivered });
   } catch (error) {
+    console.error('Unlock error:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+cron.schedule('* * * * *', async () => {
+  try {
+    console.log('🔄 Running auto-lock check...');
+    const snapshot = await db.collection('users').get();
+    const now = Date.now();
+    const THIRTY_MINUTES = 30 * 60 * 1000;
+    let updatedCount = 0;
+    
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      const unlockedTopics = data.unlockedTopics || [];
+      const topicUnlockTime = data.topicUnlockTime || {};
+      
+      const stillUnlocked = unlockedTopics.filter(topicId => {
+        const time = topicUnlockTime[topicId];
+        return time && (now - time) < THIRTY_MINUTES;
+      });
+      
+      if (stillUnlocked.length !== unlockedTopics.length) {
+        await doc.ref.set({
+          unlockedTopics: stillUnlocked
+        }, { merge: true });
+        updatedCount++;
+      }
+    }
+    
+    if (updatedCount > 0) {
+      console.log(`✅ Auto-lock: ${updatedCount} users updated`);
+    }
+  } catch (error) {
+    console.error('Cron error:', error);
   }
 });
 
