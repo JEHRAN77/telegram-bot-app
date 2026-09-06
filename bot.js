@@ -45,9 +45,10 @@ async function getOrCreateUser(userId, username, firstName, lastName) {
         verifiedAt: null,
         createdAt: new Date().toISOString(),
         unlockedTopics: [],
-        topicUnlockTime: {}
+        topicUnlockTime: {},
+        sentMessages: []
       });
-      return { userId, username, firstName, lastName, verified: false, unlockedTopics: [], topicUnlockTime: {} };
+      return { userId, username, firstName, lastName, verified: false, unlockedTopics: [], topicUnlockTime: {}, sentMessages: [] };
     }
     return { id: doc.id, ...doc.data() };
   } catch (error) {
@@ -86,9 +87,10 @@ async function checkAllChannels(ctx) {
 async function forwardVideoToStorageChannel(ctx, fileId) {
   try {
     const forwarded = await ctx.telegram.sendVideo(STORAGE_CHANNEL, fileId);
+    console.log('✅ Video forwarded to storage channel');
     return forwarded.video.file_id;
   } catch (error) {
-    console.error('Error forwarding video to storage channel:', error);
+    console.error('Error forwarding video:', error);
     throw error;
   }
 }
@@ -98,7 +100,7 @@ async function forwardPhotoToStorageChannel(ctx, fileId) {
     const forwarded = await ctx.telegram.sendPhoto(STORAGE_CHANNEL, fileId);
     return forwarded.photo[forwarded.photo.length - 1].file_id;
   } catch (error) {
-    console.error('Error forwarding photo to storage channel:', error);
+    console.error('Error forwarding photo:', error);
     throw error;
   }
 }
@@ -210,7 +212,7 @@ bot.on('video', async (ctx) => {
       const data = addTopicData[userId];
       if (data.step === 'video') {
         data.videos.push(storedFileId);
-        await ctx.reply(`✅ ভিডিও ${data.videos.length} সংরক্ষিত হয়েছে (স্টোরেজ চ্যানেলে সেভ করা হয়েছে)।\nআরও ভিডিও পাঠান অথবা /done লিখুন শেষ করতে।`);
+        await ctx.reply(`✅ ভিডিও ${data.videos.length} সংরক্ষিত হয়েছে।\nআরও ভিডিও পাঠান অথবা /done লিখুন শেষ করতে।`);
       }
       return;
     }
@@ -224,7 +226,7 @@ bot.on('video', async (ctx) => {
       return;
     }
   } catch (error) {
-    await ctx.reply('❌ ভিডিও স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে। বট কি চ্যানেলের অ্যাডমিন?');
+    await ctx.reply('❌ ভিডিও স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে।');
   }
 });
 
@@ -243,7 +245,7 @@ bot.on('document', async (ctx) => {
       const data = addTopicData[userId];
       if (data.step === 'video') {
         data.videos.push(storedFileId);
-        await ctx.reply(`✅ ভিডিও ${data.videos.length} সংরক্ষিত হয়েছে (স্টোরেজ চ্যানেলে সেভ করা হয়েছে)।\nআরও ভিডিও পাঠান অথবা /done লিখুন শেষ করতে।`);
+        await ctx.reply(`✅ ভিডিও ${data.videos.length} সংরক্ষিত হয়েছে।\nআরও ভিডিও পাঠান অথবা /done লিখুন শেষ করতে।`);
       }
       return;
     }
@@ -257,7 +259,7 @@ bot.on('document', async (ctx) => {
       return;
     }
   } catch (error) {
-    await ctx.reply('❌ ভিডিও স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে। বট কি চ্যানেলের অ্যাডমিন?');
+    await ctx.reply('❌ ভিডিও স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে।');
   }
 });
 
@@ -285,9 +287,6 @@ bot.on('text', async (ctx) => {
       data.title = text;
       data.step = 'thumbnail';
       await ctx.reply('🖼️ এই টপিকের জন্য একটি থাম্বনেইল ইমেজ পাঠান:');
-      return;
-    }
-    if (data.step === 'thumbnail') {
       return;
     }
     if (data.step === 'ads') {
@@ -351,14 +350,14 @@ bot.on('photo', async (ctx) => {
       }
     }
   } catch (error) {
-    await ctx.reply('❌ থাম্বনেইল স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে। বট কি চ্যানেলের অ্যাডমিন?');
+    await ctx.reply('❌ থাম্বনেইল স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে।');
   }
 });
 
 async function saveTopic(ctx, data) {
   try {
     const topicRef = db.collection('topics').doc();
-    const topicData = {
+    await topicRef.set({
       title: data.title,
       thumbnail: data.thumbnail,
       videos: data.videos,
@@ -366,8 +365,7 @@ async function saveTopic(ctx, data) {
       type: 'multi',
       videoCount: data.videos.length,
       createdAt: new Date().toISOString()
-    };
-    await topicRef.set(topicData);
+    });
     await ctx.reply(`✅ টপিক "${data.title}" তৈরি হয়েছে!\n📹 ভিডিও সংখ্যা: ${data.videos.length}\n🔢 অ্যাড প্রয়োজন: ${data.adsRequired}\n🆔 টপিক আইডি: ${topicRef.id}`);
   } catch (error) {
     console.error('Error saving topic:', error);
@@ -378,7 +376,7 @@ async function saveTopic(ctx, data) {
 async function saveVideo(ctx, data) {
   try {
     const topicRef = db.collection('topics').doc();
-    const topicData = {
+    await topicRef.set({
       title: data.title,
       thumbnail: data.thumbnail,
       videos: [data.videoId],
@@ -386,8 +384,7 @@ async function saveVideo(ctx, data) {
       type: 'single',
       videoCount: 1,
       createdAt: new Date().toISOString()
-    };
-    await topicRef.set(topicData);
+    });
     await ctx.reply(`✅ ভিডিও "${data.title}" যোগ হয়েছে!\n🆔 টপিক আইডি: ${topicRef.id}`);
   } catch (error) {
     console.error('Error saving video:', error);
@@ -410,8 +407,7 @@ bot.command('listtopics', async (ctx) => {
       message += `${index + 1}. ${data.title}\n`;
       message += `   🆔 ${doc.id}\n`;
       message += `   📹 ${data.videoCount}টি ভিডিও\n`;
-      message += `   🔢 ${data.adsRequired}টি অ্যাড\n`;
-      message += `   📂 ${data.type === 'single' ? 'একক' : 'সিরিজ'}\n\n`;
+      message += `   🔢 ${data.adsRequired}টি অ্যাড\n\n`;
     });
     await ctx.reply(message);
   } catch (error) {
@@ -439,43 +435,35 @@ bot.command('deletetopic', async (ctx) => {
 });
 
 bot.command('admin', async (ctx) => {
-  try {
-    if (ctx.from.id !== ADMIN_ID) {
-      return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
-    }
-    const snapshot = await db.collection('users').get();
-    const users = snapshot.docs.map(doc => doc.data());
-    const verifiedUsers = users.filter(u => u.verified);
-    await ctx.reply(
-      `📊 অ্যাডমিন প্যানেল\n\n✅ যাচাইকৃত ইউজার: ${verifiedUsers.length}\n👥 মোট ইউজার: ${users.length}`
-    );
-  } catch (error) {
-    console.error('Error in admin command:', error);
-    await ctx.reply('❌ কিছু সমস্যা হয়েছে।');
+  if (ctx.from.id !== ADMIN_ID) {
+    return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
   }
+  const snapshot = await db.collection('users').get();
+  const users = snapshot.docs.map(doc => doc.data());
+  const verifiedUsers = users.filter(u => u.verified);
+  await ctx.reply(
+    `📊 অ্যাডমিন প্যানেল\n\n✅ যাচাইকৃত ইউজার: ${verifiedUsers.length}\n👥 মোট ইউজার: ${users.length}`
+  );
 });
 
 bot.command('stats', async (ctx) => {
-  try {
-    if (ctx.from.id !== ADMIN_ID) {
-      return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
-    }
-    const snapshot = await db.collection('users')
-      .where('verified', '==', true)
-      .orderBy('verifiedAt', 'desc')
-      .limit(10)
-      .get();
-    let message = '📊 সর্বশেষ যাচাইকৃত ইউজার:\n\n';
-    const users = snapshot.docs.map(doc => doc.data());
-    users.forEach((user, index) => {
-      message += `${index + 1}. ${user.firstName} ${user.lastName || ''} (@${user.username || 'N/A'})\n`;
-    });
-    await ctx.reply(message);
-  } catch (error) {
-    console.error('Error in stats command:', error);
-    await ctx.reply('❌ কিছু সমস্যা হয়েছে।');
+  if (ctx.from.id !== ADMIN_ID) {
+    return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
   }
+  const snapshot = await db.collection('users')
+    .where('verified', '==', true)
+    .orderBy('verifiedAt', 'desc')
+    .limit(10)
+    .get();
+  let message = '📊 সর্বশেষ যাচাইকৃত ইউজার:\n\n';
+  const users = snapshot.docs.map(doc => doc.data());
+  users.forEach((user, index) => {
+    message += `${index + 1}. ${user.firstName} ${user.lastName || ''} (@${user.username || 'N/A'})\n`;
+  });
+  await ctx.reply(message);
 });
+
+// ============ API ENDPOINTS ============
 
 app.get('/api/users/verify/:userId', async (req, res) => {
   try {
@@ -525,11 +513,9 @@ app.get('/api/user-unlocked/:userId', async (req, res) => {
     const userId = parseInt(req.params.userId);
     const userRef = db.collection('users').doc(userId.toString());
     const doc = await userRef.get();
-    
     if (!doc.exists) {
       return res.json({ topics: [] });
     }
-    
     const data = doc.data();
     const unlockedTopics = data.unlockedTopics || [];
     const topicUnlockTime = data.topicUnlockTime || {};
@@ -537,9 +523,8 @@ app.get('/api/user-unlocked/:userId', async (req, res) => {
     const THIRTY_MINUTES = 30 * 60 * 1000;
     
     const activeUnlocked = unlockedTopics.filter(topicId => {
-      const unlockTime = topicUnlockTime[topicId];
-      if (!unlockTime) return false;
-      return (now - unlockTime) < THIRTY_MINUTES;
+      const time = topicUnlockTime[topicId];
+      return time && (now - time) < THIRTY_MINUTES;
     });
     
     res.json({ topics: activeUnlocked });
@@ -551,34 +536,31 @@ app.get('/api/user-unlocked/:userId', async (req, res) => {
 app.post('/api/unlock-topic', async (req, res) => {
   try {
     const { userId, topicId } = req.body;
-    console.log(`User ${userId} unlocked topic ${topicId}`);
+    console.log(`🔓 Unlocking topic ${topicId} for user ${userId}`);
     
     const userRef = db.collection('users').doc(userId.toString());
     const doc = await userRef.get();
     
     let unlockedTopics = [];
     let topicUnlockTime = {};
+    let sentMessages = [];
     if (doc.exists) {
       const data = doc.data();
       unlockedTopics = data.unlockedTopics || [];
       topicUnlockTime = data.topicUnlockTime || {};
+      sentMessages = data.sentMessages || [];
     }
     
     const now = Date.now();
     const THIRTY_MINUTES = 30 * 60 * 1000;
     
-    const activeUnlocked = unlockedTopics.filter(id => {
-      const time = topicUnlockTime[id];
-      return time && (now - time) < THIRTY_MINUTES;
-    });
-    
-    if (!activeUnlocked.includes(topicId)) {
-      activeUnlocked.push(topicId);
+    if (!unlockedTopics.includes(topicId)) {
+      unlockedTopics.push(topicId);
       topicUnlockTime[topicId] = now;
     }
     
     await userRef.set({
-      unlockedTopics: activeUnlocked,
+      unlockedTopics: unlockedTopics,
       topicUnlockTime: topicUnlockTime
     }, { merge: true });
     
@@ -589,17 +571,30 @@ app.post('/api/unlock-topic', async (req, res) => {
     if (topicDoc.exists) {
       const topicData = topicDoc.data();
       const videos = topicData.videos || [];
+      console.log(`📹 Sending ${videos.length} videos to user ${userId}`);
       
       for (const videoId of videos) {
         try {
-          await bot.telegram.sendVideo(userId, videoId, {
-            protect_content: true
+          const sentMsg = await bot.telegram.sendVideo(userId, videoId, {
+            protect_content: true,
+            caption: '⏳ এই ভিডিও ৩০ মিনিট পর ডিলিট হয়ে যাবে।'
           });
+          
+          sentMessages.push({
+            messageId: sentMsg.message_id,
+            chatId: userId,
+            videoId: videoId,
+            sentAt: Date.now()
+          });
+          
           videosDelivered++;
+          console.log(`✅ Video sent to ${userId}`);
         } catch (sendError) {
-          console.error(`Error sending video ${videoId} to user ${userId}:`, sendError.message);
+          console.error(`❌ Error sending video:`, sendError.message);
         }
       }
+      
+      await userRef.set({ sentMessages: sentMessages }, { merge: true });
     }
     
     res.json({ success: true, videosDelivered });
@@ -609,16 +604,41 @@ app.post('/api/unlock-topic', async (req, res) => {
   }
 });
 
+// ============ CRON JOB ============
+
 cron.schedule('* * * * *', async () => {
   try {
-    console.log('🔄 Running auto-lock check...');
+    console.log('🔄 Running cleanup check...');
     const snapshot = await db.collection('users').get();
     const now = Date.now();
     const THIRTY_MINUTES = 30 * 60 * 1000;
-    let updatedCount = 0;
+    let deletedCount = 0;
     
     for (const doc of snapshot.docs) {
       const data = doc.data();
+      
+      // Delete expired videos
+      const sentMessages = data.sentMessages || [];
+      const remainingMessages = [];
+      for (const msg of sentMessages) {
+        if (now - msg.sentAt < THIRTY_MINUTES) {
+          remainingMessages.push(msg);
+        } else {
+          try {
+            await bot.telegram.deleteMessage(msg.chatId, msg.messageId);
+            deletedCount++;
+            console.log(`🗑️ Deleted video message ${msg.messageId} for user ${msg.chatId}`);
+          } catch (error) {
+            console.error(`❌ Error deleting message ${msg.messageId}:`, error.message);
+          }
+        }
+      }
+      
+      if (remainingMessages.length !== sentMessages.length) {
+        await doc.ref.set({ sentMessages: remainingMessages }, { merge: true });
+      }
+      
+      // Auto-lock topics after 30 minutes
       const unlockedTopics = data.unlockedTopics || [];
       const topicUnlockTime = data.topicUnlockTime || {};
       
@@ -631,12 +651,11 @@ cron.schedule('* * * * *', async () => {
         await doc.ref.set({
           unlockedTopics: stillUnlocked
         }, { merge: true });
-        updatedCount++;
       }
     }
     
-    if (updatedCount > 0) {
-      console.log(`✅ Auto-lock: ${updatedCount} users updated`);
+    if (deletedCount > 0) {
+      console.log(`✅ Deleted ${deletedCount} expired videos`);
     }
   } catch (error) {
     console.error('Cron error:', error);
