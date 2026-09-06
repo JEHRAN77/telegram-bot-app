@@ -110,6 +110,7 @@
             line-height: 1.3;
             display: -webkit-box;
             -webkit-line-clamp: 2;
+            line-clamp: 2;
             -webkit-box-orient: vertical;
             overflow: hidden;
         }
@@ -161,59 +162,6 @@
             text-align: center;
             margin-top: 6px;
         }
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.8);
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-            padding: 20px;
-        }
-        .modal.show {
-            display: flex;
-        }
-        .modal-content {
-            background: #1a1a1a;
-            border-radius: 16px;
-            padding: 24px;
-            max-width: 400px;
-            width: 100%;
-            border: 1px solid #272727;
-            position: relative;
-        }
-        .close-btn {
-            position: absolute;
-            top: 12px;
-            right: 16px;
-            font-size: 24px;
-            color: #888;
-            cursor: pointer;
-        }
-        .close-btn:hover {
-            color: #fff;
-        }
-        .modal-content h2 {
-            font-size: 20px;
-            margin-bottom: 8px;
-            color: #fff;
-        }
-        .modal-content p {
-            color: #aaa;
-            font-size: 14px;
-            margin-bottom: 16px;
-            line-height: 1.6;
-        }
-        .modal-content .btn-ad {
-            margin-top: 8px;
-        }
-        .hidden {
-            display: none !important;
-        }
         @media (max-width: 480px) {
             #topic-grid {
                 grid-template-columns: 1fr 1fr;
@@ -242,14 +190,6 @@
         </header>
         <div id="loading">⏳ লোড হচ্ছে...</div>
         <div id="topic-grid"></div>
-        <div id="modal" class="modal hidden">
-            <div class="modal-content">
-                <span class="close-btn">&times;</span>
-                <h2 id="modal-title"></h2>
-                <p id="modal-description"></p>
-                <button id="modal-action-btn" class="btn-ad"></button>
-            </div>
-        </div>
     </div>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
@@ -272,8 +212,8 @@
             var API_BASE = '/api';
             var topics = [];
             var userData = null;
-            var currentTopic = null;
             var adTimers = {};
+            var unlockedTopics = {};
 
             function getUserId() {
                 try {
@@ -307,6 +247,10 @@
                 return null;
             }
 
+            function isTopicUnlocked(topicId) {
+                return unlockedTopics[topicId] === true;
+            }
+
             function renderTopics() {
                 var grid = document.getElementById('topic-grid');
                 var loading = document.getElementById('loading');
@@ -319,15 +263,13 @@
                 loading.style.display = 'none';
                 grid.innerHTML = '';
                 
-                var isUnlocked = userData && userData.verified === true;
-                
                 topics.forEach(function(topic) {
                     var card = document.createElement('div');
                     card.className = 'topic-card';
                     var videoCount = topic.videoCount || (topic.videos ? topic.videos.length : 0);
                     var thumbUrl = getThumbnailUrl(topic);
                     var adsRequired = topic.adsRequired || 0;
-                    var topicUnlocked = isUnlocked;
+                    var topicUnlocked = isTopicUnlocked(topic.id);
                     
                     var thumbnailHtml = '';
                     if (thumbUrl) {
@@ -360,13 +302,11 @@
                     
                     grid.appendChild(card);
                     
-                    // Add event listener to the button
                     var btn = card.querySelector('.btn-ad.watch');
                     if (btn) {
                         btn.addEventListener('click', function(e) {
                             e.stopPropagation();
                             var topicId = this.getAttribute('data-topic-id');
-                            var ads = parseInt(this.getAttribute('data-ads'));
                             var topicObj = topics.find(function(t) { return t.id === topicId; });
                             if (topicObj) {
                                 startWatchingAd(topicObj, this);
@@ -399,36 +339,69 @@
                         clearInterval(adTimers[topic.id]);
                         delete adTimers[topic.id];
                         
-                        btnElement.textContent = '✅ আনলক করা হয়েছে!';
+                        unlockedTopics[topic.id] = true;
+                        
+                        btnElement.textContent = '✅ আনলক করা আছে';
                         btnElement.className = 'btn-ad unlocked';
                         btnElement.disabled = true;
                         progressEl.textContent = '🎉 টপিকটি আনলক হয়েছে!';
                         
-                        // Update user status
-                        userData = { verified: true };
+                        var userId = getUserId();
+                        if (userId) {
+                            fetch(API_BASE + '/unlock-topic', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    userId: userId,
+                                    topicId: topic.id
+                                })
+                            }).then(function(response) {
+                                return response.json();
+                            }).then(function(data) {
+                                console.log('Unlock response:', data);
+                            }).catch(function(err) {
+                                console.error('Unlock error:', err);
+                            });
+                        }
                         
-                        // Call unlock API
-                        fetch(API_BASE + '/unlock-topic', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                userId: getUserId(),
-                                topicId: topic.id
-                            })
-                        }).then(function(response) {
-                            return response.json();
-                        }).then(function(data) {
-                            console.log('Unlock response:', data);
-                        }).catch(function(err) {
-                            console.error('Unlock error:', err);
-                        });
-                        
-                        // Update all topics
-                        setTimeout(function() {
-                            renderTopics();
-                        }, 500);
+                        var card = btnElement.closest('.topic-card');
+                        var lockIcon = card.querySelector('.lock-icon');
+                        if (lockIcon) {
+                            lockIcon.textContent = '🔓';
+                            lockIcon.className = 'lock-icon unlocked';
+                        }
                     }
                 }, 2000);
+            }
+
+            function loadUnlockedStatus() {
+                var userId = getUserId();
+                if (!userId) {
+                    console.log('No user ID found for unlocked status');
+                    renderTopics();
+                    return;
+                }
+                
+                fetch(API_BASE + '/user-unlocked/' + userId)
+                    .then(function(response) {
+                        if (!response.ok) {
+                            throw new Error('Network error');
+                        }
+                        return response.json();
+                    })
+                    .then(function(data) {
+                        console.log('Unlocked topics:', data);
+                        if (data.topics) {
+                            data.topics.forEach(function(topicId) {
+                                unlockedTopics[topicId] = true;
+                            });
+                        }
+                        renderTopics();
+                    })
+                    .catch(function(error) {
+                        console.error('Error loading unlocked status:', error);
+                        renderTopics();
+                    });
             }
 
             function loadTopics() {
@@ -440,7 +413,7 @@
                     .then(function(data) {
                         console.log('Topics loaded:', data.length);
                         topics = data;
-                        renderTopics();
+                        loadUnlockedStatus();
                     })
                     .catch(function(error) {
                         console.error('Error loading topics:', error);
@@ -459,7 +432,6 @@
                     .then(function(data) {
                         console.log('User data loaded:', data);
                         userData = data;
-                        renderTopics();
                     })
                     .catch(function(error) {
                         console.error('Error loading user status:', error);
@@ -469,20 +441,9 @@
             function init() {
                 var name = getUserName();
                 document.getElementById('user-name').textContent = name;
-                loadTopics();
                 loadUserStatus();
+                loadTopics();
             }
-
-            // Close modal
-            document.querySelector('.close-btn').addEventListener('click', function() {
-                document.getElementById('modal').classList.remove('show');
-            });
-
-            document.getElementById('modal').addEventListener('click', function(e) {
-                if (e.target === e.currentTarget) {
-                    document.getElementById('modal').classList.remove('show');
-                }
-            });
 
             setTimeout(init, 100);
         })();

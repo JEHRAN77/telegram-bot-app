@@ -27,7 +27,8 @@ const STORAGE_CHANNEL = process.env.STORAGE_CHANNEL;
 const ADMIN_ID = parseInt(process.env.ADMIN_USER_ID);
 const MINI_APP_URL = 'https://telegram-bot-app-24ti.onrender.com';
 
-let broadcastData = {};
+let addTopicData = {};
+let addVideoData = {};
 
 async function getOrCreateUser(userId, username, firstName, lastName) {
   try {
@@ -41,9 +42,10 @@ async function getOrCreateUser(userId, username, firstName, lastName) {
         lastName: lastName || '',
         verified: false,
         verifiedAt: null,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        unlockedTopics: []
       });
-      return { userId, username, firstName, lastName, verified: false };
+      return { userId, username, firstName, lastName, verified: false, unlockedTopics: [] };
     }
     return { id: doc.id, ...doc.data() };
   } catch (error) {
@@ -98,9 +100,6 @@ async function forwardPhotoToStorageChannel(ctx, fileId) {
     throw error;
   }
 }
-
-let addTopicData = {};
-let addVideoData = {};
 
 bot.start(async (ctx) => {
   try {
@@ -321,28 +320,6 @@ bot.on('text', async (ctx) => {
       return;
     }
   }
-  
-  if (broadcastData[userId]) {
-    const data = broadcastData[userId];
-    if (data.step === 'message') {
-      data.message = text;
-      data.step = 'confirm';
-      await ctx.reply(
-        `📨 আপনার ব্রডকাস্ট মেসেজ:\n\n"${text}"\n\n✅ পাঠাতে চান? "হ্যাঁ" বা "না" লিখুন।`
-      );
-      return;
-    }
-    if (data.step === 'confirm') {
-      if (text.toLowerCase() === 'হ্যাঁ' || text.toLowerCase() === 'yes') {
-        await startBroadcast(ctx, data.message);
-        delete broadcastData[userId];
-      } else {
-        await ctx.reply('❌ ব্রডকাস্ট বাতিল করা হয়েছে।');
-        delete broadcastData[userId];
-      }
-      return;
-    }
-  }
 });
 
 bot.on('photo', async (ctx) => {
@@ -459,53 +436,6 @@ bot.command('deletetopic', async (ctx) => {
   }
 });
 
-bot.command('broadcast', async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) {
-    return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
-  }
-  broadcastData[ctx.from.id] = { step: 'message' };
-  await ctx.reply('📢 আপনি যে মেসেজটি সবাইকে পাঠাতে চান তা লিখুন:');
-});
-
-async function startBroadcast(ctx, message) {
-  try {
-    const snapshot = await db.collection('users').where('verified', '==', true).get();
-    const users = snapshot.docs.map(doc => doc.data());
-    
-    if (users.length === 0) {
-      return ctx.reply('📭 কোনো যাচাইকৃত ইউজার নেই।');
-    }
-    
-    await ctx.reply(`📨 ব্রডকাস্ট শুরু হচ্ছে... ${users.length} জন ইউজারকে পাঠানো হবে।`);
-    
-    let success = 0;
-    let failed = 0;
-    
-    for (let i = 0; i < users.length; i++) {
-      try {
-        await bot.telegram.sendMessage(users[i].userId, message);
-        success++;
-      } catch (error) {
-        failed++;
-        console.error(`Failed to send to ${users[i].userId}:`, error.message);
-      }
-      if ((i + 1) % 30 === 0) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-    }
-    
-    await ctx.reply(
-      `✅ ব্রডকাস্ট শেষ!\n\n` +
-      `✅ সফল: ${success}\n` +
-      `❌ ব্যর্থ: ${failed}\n` +
-      `👥 মোট: ${users.length}`
-    );
-  } catch (error) {
-    console.error('Error in broadcast:', error);
-    await ctx.reply('❌ ব্রডকাস্ট করতে সমস্যা হয়েছে।');
-  }
-}
-
 bot.command('admin', async (ctx) => {
   try {
     if (ctx.from.id !== ADMIN_ID) {
@@ -588,10 +518,46 @@ app.get('/api/thumbnail/:fileId', async (req, res) => {
   }
 });
 
+app.get('/api/user-unlocked/:userId', async (req, res) => {
+  try {
+    const userId = parseInt(req.params.userId);
+    const userRef = db.collection('users').doc(userId.toString());
+    const doc = await userRef.get();
+    
+    if (!doc.exists) {
+      return res.json({ topics: [] });
+    }
+    
+    const data = doc.data();
+    const unlockedTopics = data.unlockedTopics || [];
+    res.json({ topics: unlockedTopics });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/unlock-topic', async (req, res) => {
   try {
     const { userId, topicId } = req.body;
     console.log(`User ${userId} unlocked topic ${topicId}`);
+    
+    const userRef = db.collection('users').doc(userId.toString());
+    const doc = await userRef.get();
+    
+    let unlockedTopics = [];
+    if (doc.exists) {
+      const data = doc.data();
+      unlockedTopics = data.unlockedTopics || [];
+    }
+    
+    if (!unlockedTopics.includes(topicId)) {
+      unlockedTopics.push(topicId);
+    }
+    
+    await userRef.set({
+      unlockedTopics: unlockedTopics
+    }, { merge: true });
+    
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
