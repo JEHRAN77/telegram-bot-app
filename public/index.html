@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ভিডিও টপিক</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>📹 ভিডিও টপিক</h1>
+            <div id="user-info">
+                <span id="user-name"></span>
+            </div>
+        </header>
+        <div id="loading">⏳ লোড হচ্ছে...</div>
+        <div id="topic-grid"></div>
+        <div id="modal" class="modal hidden">
+            <div class="modal-content">
+                <span class="close-btn">&times;</span>
+                <h2 id="modal-title"></h2>
+                <p id="modal-description"></p>
+                <button id="modal-action-btn" class="btn-primary"></button>
+            </div>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
