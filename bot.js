@@ -279,7 +279,11 @@ bot.command('done', async (ctx) => {
 bot.on('text', async (ctx) => {
   const userId = ctx.from.id;
   const text = ctx.message.text;
-  if (text.startsWith('/')) return;
+  
+  // ✅ কমান্ড চেক করুন - কমান্ড হলে এখানে থামুন
+  if (text.startsWith('/')) {
+    return; // কমান্ডগুলো অন্য হ্যান্ডলারে যাবে
+  }
   
   if (addTopicData[userId]) {
     const data = addTopicData[userId];
@@ -393,7 +397,7 @@ async function saveVideo(ctx, data) {
 }
 
 // =============================================
-// ✅ অ্যাডমিন কমান্ড (ডিবাগ ভার্সন)
+// ✅ অ্যাডমিন কমান্ড
 // =============================================
 
 bot.command('list', async (ctx) => {
@@ -570,7 +574,7 @@ bot.command('checkdb', async (ctx) => {
 });
 
 // =============================================
-// 🚨 জরুরি ডায়াগনস্টিক কমান্ড - ১০০% কাজ করবে
+// 🚨 জরুরি ডায়াগনস্টিক কমানড
 // =============================================
 
 bot.command('testdb', async (ctx) => {
