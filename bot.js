@@ -392,10 +392,10 @@ async function saveVideo(ctx, data) {
   }
 }
 
-// ============ অ্যাডমিন কমান্ড (Debug Version) ============
+// ============ সব কমান্ড ডিবাগ ভার্সন ============
 
 bot.command('list', async (ctx) => {
-  console.log('📋 /list command triggered by:', ctx.from.id);
+  console.log('📋 /list command by:', ctx.from.id);
   
   if (ctx.from.id !== ADMIN_ID) {
     return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
@@ -427,13 +427,13 @@ bot.command('list', async (ctx) => {
     message += `📊 মোট: ${snapshot.size}টি টপিক, ${totalVideos}টি ভিডিও`;
     await ctx.reply(message);
   } catch (error) {
-    console.error('❌ Error listing topics:', error);
+    console.error('❌ Error listing:', error);
     await ctx.reply('❌ তালিকা দেখাতে সমস্যা হয়েছে: ' + error.message);
   }
 });
 
 bot.command('admin', async (ctx) => {
-  console.log('📊 /admin command triggered by:', ctx.from.id);
+  console.log('📊 /admin command by:', ctx.from.id);
   
   if (ctx.from.id !== ADMIN_ID) {
     return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
@@ -458,7 +458,7 @@ bot.command('admin', async (ctx) => {
 });
 
 bot.command('stats', async (ctx) => {
-  console.log('📊 /stats command triggered by:', ctx.from.id);
+  console.log('📊 /stats command by:', ctx.from.id);
   
   if (ctx.from.id !== ADMIN_ID) {
     return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
@@ -490,7 +490,7 @@ bot.command('stats', async (ctx) => {
 });
 
 bot.command('delete', async (ctx) => {
-  console.log('🗑️ /delete command triggered by:', ctx.from.id);
+  console.log('🗑️ /delete command by:', ctx.from.id);
   
   if (ctx.from.id !== ADMIN_ID) {
     return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
@@ -498,7 +498,7 @@ bot.command('delete', async (ctx) => {
   
   try {
     const snapshot = await db.collection('topics').get();
-    console.log('🗑️ Topics found for delete:', snapshot.size);
+    console.log('🗑️ Topics found:', snapshot.size);
     
     if (snapshot.empty) {
       return ctx.reply('📭 এখনো কোনো টপিক বা ভিডিও যোগ করা হয়নি।');
@@ -521,7 +521,7 @@ bot.command('delete', async (ctx) => {
 });
 
 bot.action(/delete_(.+)/, async (ctx) => {
-  console.log('🗑️ Delete action triggered for:', ctx.match[1]);
+  console.log('🗑️ Delete action for:', ctx.match[1]);
   
   if (ctx.from.id !== ADMIN_ID) {
     await ctx.answerCbQuery('⛔ শুধুমাত্র অ্যাডমিনের জন্য।');
@@ -535,14 +535,14 @@ bot.action(/delete_(.+)/, async (ctx) => {
     await ctx.reply(`✅ টপিকটি ডিলিট করা হয়েছে।`);
     await ctx.deleteMessage();
   } catch (error) {
-    console.error('❌ Error deleting topic:', error);
+    console.error('❌ Error deleting:', error);
     await ctx.answerCbQuery('❌ ডিলিট করতে সমস্যা হয়েছে।');
     await ctx.reply('❌ ডিলিট করতে সমস্যা হয়েছে: ' + error.message);
   }
 });
 
 bot.command('broadcast', async (ctx) => {
-  console.log('📢 /broadcast command triggered by:', ctx.from.id);
+  console.log('📢 /broadcast command by:', ctx.from.id);
   
   if (ctx.from.id !== ADMIN_ID) {
     return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
