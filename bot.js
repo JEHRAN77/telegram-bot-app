@@ -392,10 +392,13 @@ async function saveVideo(ctx, data) {
   }
 }
 
-// ============ সব কমান্ড ডিবাগ ভার্সন ============
+// =============================================
+// ✅ সব অ্যাডমিন কমান্ড (গ্যারান্টিযুক্ত)
+// =============================================
 
 bot.command('list', async (ctx) => {
-  console.log('📋 /list command by:', ctx.from.id);
+  await ctx.reply('⏳ তালিকা তৈরি হচ্ছে...');
+  console.log('📋 /list triggered by:', ctx.from.id);
   
   if (ctx.from.id !== ADMIN_ID) {
     return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
@@ -403,15 +406,10 @@ bot.command('list', async (ctx) => {
   
   try {
     const snapshot = await db.collection('topics').get();
-    console.log('📋 Topics found:', snapshot.size);
-    
     if (snapshot.empty) {
       return ctx.reply('📭 এখনো কোনো টপিক বা ভিডিও যোগ করা হয়নি।');
     }
-    
     let message = '📋 সব টপিক ও ভিডিওর তালিকা:\n\n';
-    let totalVideos = 0;
-    
     snapshot.docs.forEach((doc, index) => {
       const data = doc.data();
       const videoCount = data.videoCount || (data.videos ? data.videos.length : 0);
@@ -421,10 +419,7 @@ bot.command('list', async (ctx) => {
       message += `   🆔 ${doc.id}\n`;
       message += `   📹 ${videoCount}টি ভিডিও\n`;
       message += `   🔢 ${data.adsRequired || 0}টি অ্যাড প্রয়োজন\n\n`;
-      totalVideos += videoCount;
     });
-    
-    message += `📊 মোট: ${snapshot.size}টি টপিক, ${totalVideos}টি ভিডিও`;
     await ctx.reply(message);
   } catch (error) {
     console.error('❌ Error listing:', error);
@@ -433,7 +428,8 @@ bot.command('list', async (ctx) => {
 });
 
 bot.command('admin', async (ctx) => {
-  console.log('📊 /admin command by:', ctx.from.id);
+  await ctx.reply('⏳ অ্যাডমিন প্যানেল লোড হচ্ছে...');
+  console.log('📊 /admin triggered by:', ctx.from.id);
   
   if (ctx.from.id !== ADMIN_ID) {
     return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
@@ -441,11 +437,8 @@ bot.command('admin', async (ctx) => {
   
   try {
     const snapshot = await db.collection('users').get();
-    console.log('📊 Users found:', snapshot.size);
-    
     const users = snapshot.docs.map(doc => doc.data());
     const verifiedUsers = users.filter(u => u.verified === true);
-    
     await ctx.reply(
       `📊 অ্যাডমিন প্যানেল\n\n` +
       `✅ যাচাইকৃত ইউজার: ${verifiedUsers.length}\n` +
@@ -458,7 +451,8 @@ bot.command('admin', async (ctx) => {
 });
 
 bot.command('stats', async (ctx) => {
-  console.log('📊 /stats command by:', ctx.from.id);
+  await ctx.reply('⏳ পরিসংখ্যান লোড হচ্ছে...');
+  console.log('📊 /stats triggered by:', ctx.from.id);
   
   if (ctx.from.id !== ADMIN_ID) {
     return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
@@ -470,16 +464,12 @@ bot.command('stats', async (ctx) => {
       .orderBy('verifiedAt', 'desc')
       .limit(10)
       .get();
-    
-    console.log('📊 Verified users found:', snapshot.size);
-    
     if (snapshot.empty) {
       return ctx.reply('📊 এখনো কোনো যাচাইকৃত ইউজার নেই।');
     }
-    
     let message = '📊 সর্বশেষ যাচাইকৃত ইউজার:\n\n';
-    const users = snapshot.docs.map(doc => doc.data());
-    users.forEach((user, index) => {
+    snapshot.docs.forEach((doc, index) => {
+      const user = doc.data();
       message += `${index + 1}. ${user.firstName} ${user.lastName || ''} (@${user.username || 'N/A'})\n`;
     });
     await ctx.reply(message);
@@ -490,7 +480,8 @@ bot.command('stats', async (ctx) => {
 });
 
 bot.command('delete', async (ctx) => {
-  console.log('🗑️ /delete command by:', ctx.from.id);
+  await ctx.reply('⏳ ডিলিট তালিকা তৈরি হচ্ছে...');
+  console.log('🗑️ /delete triggered by:', ctx.from.id);
   
   if (ctx.from.id !== ADMIN_ID) {
     return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
@@ -498,22 +489,15 @@ bot.command('delete', async (ctx) => {
   
   try {
     const snapshot = await db.collection('topics').get();
-    console.log('🗑️ Topics found:', snapshot.size);
-    
     if (snapshot.empty) {
       return ctx.reply('📭 এখনো কোনো টপিক বা ভিডিও যোগ করা হয়নি।');
     }
-    
-    let message = '🗑️ কোনটি ডিলিট করতে চান? নিচের বাটনে ক্লিক করুন:\n\n';
     const buttons = [];
     snapshot.docs.forEach((doc) => {
       const data = doc.data();
-      const type = data.type === 'single' ? '🎬' : '📁';
-      const label = `${type} ${data.title || 'নামবিহীন'}`;
-      buttons.push([Markup.button.callback(`🗑️ ${label}`, `delete_${doc.id}`)]);
+      buttons.push([Markup.button.callback(`🗑️ ${data.title || 'নামবিহীন'}`, `delete_${doc.id}`)]);
     });
-    
-    await ctx.reply(message, Markup.inlineKeyboard(buttons));
+    await ctx.reply('🗑️ কোনটি ডিলিট করতে চান?', Markup.inlineKeyboard(buttons));
   } catch (error) {
     console.error('❌ Error in delete:', error);
     await ctx.reply('❌ ডিলিট লিস্ট দেখাতে সমস্যা হয়েছে: ' + error.message);
@@ -521,28 +505,22 @@ bot.command('delete', async (ctx) => {
 });
 
 bot.action(/delete_(.+)/, async (ctx) => {
-  console.log('🗑️ Delete action for:', ctx.match[1]);
-  
-  if (ctx.from.id !== ADMIN_ID) {
-    await ctx.answerCbQuery('⛔ শুধুমাত্র অ্যাডমিনের জন্য।');
-    return;
-  }
+  console.log('🗑️ DELETE action for:', ctx.match[1]);
+  await ctx.answerCbQuery('⏳ ডিলিট করা হচ্ছে...');
   
   const topicId = ctx.match[1];
   try {
     await db.collection('topics').doc(topicId).delete();
-    await ctx.answerCbQuery('✅ ডিলিট করা হয়েছে!');
-    await ctx.reply(`✅ টপিকটি ডিলিট করা হয়েছে।`);
-    await ctx.deleteMessage();
+    await ctx.editMessageText('✅ টপিকটি ডিলিট করা হয়েছে।');
   } catch (error) {
     console.error('❌ Error deleting:', error);
-    await ctx.answerCbQuery('❌ ডিলিট করতে সমস্যা হয়েছে।');
     await ctx.reply('❌ ডিলিট করতে সমস্যা হয়েছে: ' + error.message);
   }
 });
 
 bot.command('broadcast', async (ctx) => {
-  console.log('📢 /broadcast command by:', ctx.from.id);
+  await ctx.reply('⏳ ব্রডকাস্ট প্রস্তুত হচ্ছে...');
+  console.log('📢 /broadcast triggered by:', ctx.from.id);
   
   if (ctx.from.id !== ADMIN_ID) {
     return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
@@ -551,12 +529,9 @@ bot.command('broadcast', async (ctx) => {
   try {
     const snapshot = await db.collection('users').where('verified', '==', true).get();
     const users = snapshot.docs.map(doc => doc.data());
-    console.log('📢 Broadcast to:', users.length, 'users');
-    
     if (users.length === 0) {
       return ctx.reply('📭 কোনো যাচাইকৃত ইউজার নেই।');
     }
-    
     await ctx.reply(`📨 ব্রডকাস্ট শুরু হচ্ছে... ${users.length} জন ইউজারকে পাঠানো হবে।`);
     let success = 0, failed = 0;
     for (let i = 0; i < users.length; i++) {
