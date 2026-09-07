@@ -393,161 +393,139 @@ async function saveVideo(ctx, data) {
 }
 
 // =============================================
-// ✅ সব অ্যাডমিন কমান্ড (গ্যারান্টিযুক্ত)
+// ✅ সব অ্যাডমিন কমান্ড - ডায়রেক্ট টেক্সট চেক
 // =============================================
 
-bot.command('list', async (ctx) => {
-  await ctx.reply('⏳ তালিকা তৈরি হচ্ছে...');
-  console.log('📋 /list triggered by:', ctx.from.id);
+bot.on('text', async (ctx) => {
+  const text = ctx.message.text;
   
-  if (ctx.from.id !== ADMIN_ID) {
-    return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
-  }
+  // শুধু অ্যাডমিন চেক করুন
+  if (ctx.from.id !== ADMIN_ID) return;
   
-  try {
-    const snapshot = await db.collection('topics').get();
-    if (snapshot.empty) {
-      return ctx.reply('📭 এখনো কোনো টপিক বা ভিডিও যোগ করা হয়নি।');
+  // ===== /list =====
+  if (text === '/list' || text === '/list@' + bot.botInfo.username) {
+    await ctx.reply('⏳ তালিকা তৈরি হচ্ছে...');
+    try {
+      const snapshot = await db.collection('topics').get();
+      if (snapshot.empty) {
+        return ctx.reply('📭 এখনো কোনো টপিক বা ভিডিও যোগ করা হয়নি।');
+      }
+      let message = '📋 সব টপিক ও ভিডিওর তালিকা:\n\n';
+      snapshot.docs.forEach((doc, index) => {
+        const data = doc.data();
+        const videoCount = data.videoCount || (data.videos ? data.videos.length : 0);
+        const type = data.type === 'single' ? '🎬 একক ভিডিও' : '📁 টপিক (সিরিজ)';
+        message += `${index + 1}. ${type}\n`;
+        message += `   📌 ${data.title || 'নামবিহীন'}\n`;
+        message += `   🆔 ${doc.id}\n`;
+        message += `   📹 ${videoCount}টি ভিডিও\n`;
+        message += `   🔢 ${data.adsRequired || 0}টি অ্যাড প্রয়োজন\n\n`;
+      });
+      await ctx.reply(message);
+    } catch (error) {
+      await ctx.reply('❌ তালিকা দেখাতে সমস্যা হয়েছে: ' + error.message);
     }
-    let message = '📋 সব টপিক ও ভিডিওর তালিকা:\n\n';
-    snapshot.docs.forEach((doc, index) => {
-      const data = doc.data();
-      const videoCount = data.videoCount || (data.videos ? data.videos.length : 0);
-      const type = data.type === 'single' ? '🎬 একক ভিডিও' : '📁 টপিক (সিরিজ)';
-      message += `${index + 1}. ${type}\n`;
-      message += `   📌 ${data.title || 'নামবিহীন'}\n`;
-      message += `   🆔 ${doc.id}\n`;
-      message += `   📹 ${videoCount}টি ভিডিও\n`;
-      message += `   🔢 ${data.adsRequired || 0}টি অ্যাড প্রয়োজন\n\n`;
-    });
-    await ctx.reply(message);
-  } catch (error) {
-    console.error('❌ Error listing:', error);
-    await ctx.reply('❌ তালিকা দেখাতে সমস্যা হয়েছে: ' + error.message);
-  }
-});
-
-bot.command('admin', async (ctx) => {
-  await ctx.reply('⏳ অ্যাডমিন প্যানেল লোড হচ্ছে...');
-  console.log('📊 /admin triggered by:', ctx.from.id);
-  
-  if (ctx.from.id !== ADMIN_ID) {
-    return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+    return;
   }
   
-  try {
-    const snapshot = await db.collection('users').get();
-    const users = snapshot.docs.map(doc => doc.data());
-    const verifiedUsers = users.filter(u => u.verified === true);
-    await ctx.reply(
-      `📊 অ্যাডমিন প্যানেল\n\n` +
-      `✅ যাচাইকৃত ইউজার: ${verifiedUsers.length}\n` +
-      `👥 মোট ইউজার: ${users.length}`
-    );
-  } catch (error) {
-    console.error('❌ Error in admin:', error);
-    await ctx.reply('❌ অ্যাডমিন প্যানেল লোড করতে সমস্যা হয়েছে: ' + error.message);
-  }
-});
-
-bot.command('stats', async (ctx) => {
-  await ctx.reply('⏳ পরিসংখ্যান লোড হচ্ছে...');
-  console.log('📊 /stats triggered by:', ctx.from.id);
-  
-  if (ctx.from.id !== ADMIN_ID) {
-    return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
-  }
-  
-  try {
-    const snapshot = await db.collection('users')
-      .where('verified', '==', true)
-      .orderBy('verifiedAt', 'desc')
-      .limit(10)
-      .get();
-    if (snapshot.empty) {
-      return ctx.reply('📊 এখনো কোনো যাচাইকৃত ইউজার নেই।');
+  // ===== /admin =====
+  if (text === '/admin' || text === '/admin@' + bot.botInfo.username) {
+    await ctx.reply('⏳ অ্যাডমিন প্যানেল লোড হচ্ছে...');
+    try {
+      const snapshot = await db.collection('users').get();
+      const users = snapshot.docs.map(doc => doc.data());
+      const verifiedUsers = users.filter(u => u.verified === true);
+      await ctx.reply(
+        `📊 অ্যাডমিন প্যানেল\n\n` +
+        `✅ যাচাইকৃত ইউজার: ${verifiedUsers.length}\n` +
+        `👥 মোট ইউজার: ${users.length}`
+      );
+    } catch (error) {
+      await ctx.reply('❌ অ্যাডমিন প্যানেল লোড করতে সমস্যা হয়েছে: ' + error.message);
     }
-    let message = '📊 সর্বশেষ যাচাইকৃত ইউজার:\n\n';
-    snapshot.docs.forEach((doc, index) => {
-      const user = doc.data();
-      message += `${index + 1}. ${user.firstName} ${user.lastName || ''} (@${user.username || 'N/A'})\n`;
-    });
-    await ctx.reply(message);
-  } catch (error) {
-    console.error('❌ Error in stats:', error);
-    await ctx.reply('❌ পরিসংখ্যান লোড করতে সমস্যা হয়েছে: ' + error.message);
-  }
-});
-
-bot.command('delete', async (ctx) => {
-  await ctx.reply('⏳ ডিলিট তালিকা তৈরি হচ্ছে...');
-  console.log('🗑️ /delete triggered by:', ctx.from.id);
-  
-  if (ctx.from.id !== ADMIN_ID) {
-    return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+    return;
   }
   
-  try {
-    const snapshot = await db.collection('topics').get();
-    if (snapshot.empty) {
-      return ctx.reply('📭 এখনো কোনো টপিক বা ভিডিও যোগ করা হয়নি।');
+  // ===== /stats =====
+  if (text === '/stats' || text === '/stats@' + bot.botInfo.username) {
+    await ctx.reply('⏳ পরিসংখ্যান লোড হচ্ছে...');
+    try {
+      const snapshot = await db.collection('users')
+        .where('verified', '==', true)
+        .orderBy('verifiedAt', 'desc')
+        .limit(10)
+        .get();
+      if (snapshot.empty) {
+        return ctx.reply('📊 এখনো কোনো যাচাইকৃত ইউজার নেই।');
+      }
+      let message = '📊 সর্বশেষ যাচাইকৃত ইউজার:\n\n';
+      snapshot.docs.forEach((doc, index) => {
+        const user = doc.data();
+        message += `${index + 1}. ${user.firstName} ${user.lastName || ''} (@${user.username || 'N/A'})\n`;
+      });
+      await ctx.reply(message);
+    } catch (error) {
+      await ctx.reply('❌ পরিসংখ্যান লোড করতে সমস্যা হয়েছে: ' + error.message);
     }
-    const buttons = [];
-    snapshot.docs.forEach((doc) => {
-      const data = doc.data();
-      buttons.push([Markup.button.callback(`🗑️ ${data.title || 'নামবিহীন'}`, `delete_${doc.id}`)]);
-    });
-    await ctx.reply('🗑️ কোনটি ডিলিট করতে চান?', Markup.inlineKeyboard(buttons));
-  } catch (error) {
-    console.error('❌ Error in delete:', error);
-    await ctx.reply('❌ ডিলিট লিস্ট দেখাতে সমস্যা হয়েছে: ' + error.message);
+    return;
+  }
+  
+  // ===== /delete =====
+  if (text === '/delete' || text === '/delete@' + bot.botInfo.username) {
+    await ctx.reply('⏳ ডিলিট তালিকা তৈরি হচ্ছে...');
+    try {
+      const snapshot = await db.collection('topics').get();
+      if (snapshot.empty) {
+        return ctx.reply('📭 এখনো কোনো টপিক বা ভিডিও যোগ করা হয়নি।');
+      }
+      const buttons = [];
+      snapshot.docs.forEach((doc) => {
+        const data = doc.data();
+        buttons.push([Markup.button.callback(`🗑️ ${data.title || 'নামবিহীন'}`, `delete_${doc.id}`)]);
+      });
+      await ctx.reply('🗑️ কোনটি ডিলিট করতে চান?', Markup.inlineKeyboard(buttons));
+    } catch (error) {
+      await ctx.reply('❌ ডিলিট লিস্ট দেখাতে সমস্যা হয়েছে: ' + error.message);
+    }
+    return;
+  }
+  
+  // ===== /broadcast =====
+  if (text === '/broadcast' || text === '/broadcast@' + bot.botInfo.username) {
+    await ctx.reply('⏳ ব্রডকাস্ট প্রস্তুত হচ্ছে...');
+    try {
+      const snapshot = await db.collection('users').where('verified', '==', true).get();
+      const users = snapshot.docs.map(doc => doc.data());
+      if (users.length === 0) {
+        return ctx.reply('📭 কোনো যাচাইকৃত ইউজার নেই।');
+      }
+      await ctx.reply(`📨 ব্রডকাস্ট শুরু হচ্ছে... ${users.length} জন ইউজারকে পাঠানো হবে।`);
+      let success = 0, failed = 0;
+      for (let i = 0; i < users.length; i++) {
+        try {
+          await bot.telegram.sendMessage(users[i].userId, '📢 আপনার মেসেজ এখানে');
+          success++;
+        } catch (error) {
+          failed++;
+        }
+        if ((i + 1) % 30 === 0) await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      await ctx.reply(`✅ ব্রডকাস্ট শেষ!\n✅ সফল: ${success}\n❌ ব্যর্থ: ${failed}`);
+    } catch (error) {
+      await ctx.reply('❌ ব্রডকাস্ট করতে সমস্যা হয়েছে: ' + error.message);
+    }
+    return;
   }
 });
 
 bot.action(/delete_(.+)/, async (ctx) => {
-  console.log('🗑️ DELETE action for:', ctx.match[1]);
   await ctx.answerCbQuery('⏳ ডিলিট করা হচ্ছে...');
-  
   const topicId = ctx.match[1];
   try {
     await db.collection('topics').doc(topicId).delete();
     await ctx.editMessageText('✅ টপিকটি ডিলিট করা হয়েছে।');
   } catch (error) {
-    console.error('❌ Error deleting:', error);
     await ctx.reply('❌ ডিলিট করতে সমস্যা হয়েছে: ' + error.message);
-  }
-});
-
-bot.command('broadcast', async (ctx) => {
-  await ctx.reply('⏳ ব্রডকাস্ট প্রস্তুত হচ্ছে...');
-  console.log('📢 /broadcast triggered by:', ctx.from.id);
-  
-  if (ctx.from.id !== ADMIN_ID) {
-    return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
-  }
-  
-  try {
-    const snapshot = await db.collection('users').where('verified', '==', true).get();
-    const users = snapshot.docs.map(doc => doc.data());
-    if (users.length === 0) {
-      return ctx.reply('📭 কোনো যাচাইকৃত ইউজার নেই।');
-    }
-    await ctx.reply(`📨 ব্রডকাস্ট শুরু হচ্ছে... ${users.length} জন ইউজারকে পাঠানো হবে।`);
-    let success = 0, failed = 0;
-    for (let i = 0; i < users.length; i++) {
-      try {
-        await bot.telegram.sendMessage(users[i].userId, '📢 আপনার মেসেজ এখানে');
-        success++;
-      } catch (error) {
-        failed++;
-        console.error('❌ Failed to send to:', users[i].userId);
-      }
-      if ((i + 1) % 30 === 0) await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-    await ctx.reply(`✅ ব্রডকাস্ট শেষ!\n✅ সফল: ${success}\n❌ ব্যর্থ: ${failed}`);
-  } catch (error) {
-    console.error('❌ Error in broadcast:', error);
-    await ctx.reply('❌ ব্রডকাস্ট করতে সমস্যা হয়েছে: ' + error.message);
   }
 });
 
