@@ -272,9 +272,9 @@
     <!-- অ্যাড ওভারলে -->
     <div id="ad-overlay">
         <div class="ad-content">
-            <div class="ad-label">⏳ অ্যাড দেখুন (১৫ সেকেন্ড)</div>
+            <div class="ad-label">⏳ অ্যাড দেখুন</div>
             <iframe id="adIframe" src=""></iframe>
-            <div class="ad-timer"><span id="adTimer">15</span> সেকেন্ড</div>
+            <div class="ad-timer"><span id="adTimer">0</span> সেকেন্ড</div>
             <button class="ad-skip-btn" id="adSkipBtn">✅ অ্যাড শেষ! আনলক করুন</button>
         </div>
     </div>
@@ -284,7 +284,7 @@
         (function() {
             'use strict';
             
-            console.log('App started - 2 Ad Links Rotation');
+            console.log('App started - Random Timer 15-45 seconds');
             
             var Telegram = null;
             try {
@@ -314,6 +314,11 @@
             function getRandomAdLink() {
                 var randomIndex = Math.floor(Math.random() * AD_LINKS.length);
                 return AD_LINKS[randomIndex];
+            }
+
+            // ১৫-৪৫ সেকেন্ডের মধ্যে র্যান্ডম টাইমার
+            function getRandomTimer() {
+                return Math.floor(Math.random() * (45 - 15 + 1)) + 15;
             }
 
             function getUserId() {
@@ -470,7 +475,7 @@
                 
                 var progressEl = document.getElementById('progress-' + topic.id);
                 if (progressEl) {
-                    progressEl.textContent = '⏳ অ্যাড দেখছেন... (১৫ সেকেন্ড)';
+                    progressEl.textContent = '⏳ অ্যাড দেখছেন...';
                 }
                 
                 showAd();
@@ -482,16 +487,20 @@
                 var skipBtn = document.getElementById('adSkipBtn');
                 var timerDisplay = document.getElementById('adTimer');
                 
-                // র্যান্ডম লিংক সিলেক্ট করুন (২টি থেকে)
+                // র্যান্ডম লিংক সিলেক্ট করুন
                 var adLink = getRandomAdLink();
-                console.log('Showing ad link:', adLink);
+                // র্যান্ডম টাইমার (১৫-৪৫ সেকেন্ড)
+                var totalTime = getRandomTimer();
+                var timeLeft = totalTime;
+                
+                console.log('Ad link:', adLink);
+                console.log('Timer:', totalTime, 'seconds');
                 
                 overlay.classList.add('show');
                 iframe.src = adLink;
                 skipBtn.className = 'ad-skip-btn';
                 skipBtn.disabled = true;
                 
-                var timeLeft = 15;
                 timerDisplay.textContent = timeLeft;
                 
                 if (timerInterval) {
