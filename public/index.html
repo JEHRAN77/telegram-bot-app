@@ -4,63 +4,345 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>📹 ভিডিও টপিক</title>
-    <script src="//libtl.com/sdk.js" data-zone="11737734" data-sdk="show_11737734"></script>
     <style>
-        *{margin:0;padding:0;box-sizing:border-box}
-        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f0f0f;color:#fff;min-height:100vh}
-        #app{max-width:600px;margin:0 auto;padding:16px;padding-bottom:80px}
-        header{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid #272727;margin-bottom:16px}
-        header h1{font-size:20px;font-weight:700}
-        #user-info{font-size:14px;color:#aaa}
-        #loading{text-align:center;padding:40px;color:#888;font-size:16px}
-        #topic-grid{display:grid;grid-template-columns:1fr;gap:16px}
-        .topic-card{background:#1a1a1a;border-radius:12px;overflow:hidden;border:1px solid #272727;display:flex;flex-direction:column;transition:all .3s ease}
-        .topic-card.unlocked-card{border-color:#22c55e;box-shadow:0 0 20px rgba(34,197,94,0.2)}
-        .topic-card:active{transform:scale(.98)}
-        .thumbnail-container{position:relative;background:#2a2a2a;aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;overflow:hidden}
-        .thumbnail-container img{width:100%;height:100%;object-fit:cover}
-        .lock-icon{position:absolute;top:12px;right:12px;background:rgba(0,0,0,.75);border-radius:50%;width:32px;height:32px;display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff;transition:all .5s ease}
-        .lock-icon.unlocked{background:rgba(34,197,94,.9);box-shadow:0 0 20px rgba(34,197,94,.5)}
-        .video-count-badge{position:absolute;bottom:12px;left:12px;background:rgba(0,0,0,.75);border-radius:4px;padding:4px 10px;font-size:12px;color:#fff}
-        .topic-info{padding:14px 16px 10px 16px;flex:1}
-        .topic-title{font-size:18px;font-weight:600;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-        .topic-meta{font-size:14px;color:#888;margin-top:4px}
-        .topic-actions{padding:0 16px 16px 16px}
-        .btn-ad{width:100%;padding:14px;border:none;border-radius:10px;font-size:16px;font-weight:600;color:#fff;cursor:pointer;transition:all .5s ease}
-        .btn-ad:active{transform:scale(.97)}
-        .btn-ad:disabled{opacity:.8;cursor:not-allowed}
-        .btn-ad.watch{background:#dc2626;box-shadow:0 4px 15px rgba(220,38,38,.3)}
-        .btn-ad.watch:active{background:#b91c1c}
-        .btn-ad.unlocked{background:#22c55e;box-shadow:0 4px 25px rgba(34,197,94,.5);animation:pulse-green 2s infinite}
-        @keyframes pulse-green{0%{box-shadow:0 4px 25px rgba(34,197,94,.5)}50%{box-shadow:0 4px 40px rgba(34,197,94,.8)}100%{box-shadow:0 4px 25px rgba(34,197,94,.5)}}
-        .btn-ad.watching{background:#f59e0b;box-shadow:0 4px 15px rgba(245,158,11,.3)}
-        .ad-progress{font-size:13px;color:#fbbf24;text-align:center;margin-top:8px}
-        .timeout-badge{font-size:11px;color:#f87171;margin-top:4px}
-        .timeout-badge.unlocked-badge{color:#4ade80}
-        #ad-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;background:rgba(0,0,0,.85);justify-content:center;align-items:center;flex-direction:column}
-        #ad-overlay.show{display:flex}
-        #ad-overlay .ad-content{text-align:center;padding:30px}
-        #ad-overlay .ad-timer{color:#fff;font-size:72px;font-weight:700;margin:20px 0}
-        #ad-overlay .ad-timer span{color:#fbbf24}
-        #ad-overlay .ad-label{color:#aaa;font-size:18px}
-        #ad-overlay .ad-skip-btn{background:#22c55e;color:#fff;border:none;border-radius:10px;padding:14px 40px;font-size:18px;font-weight:600;cursor:pointer;display:none;margin-top:20px;box-shadow:0 4px 25px rgba(34,197,94,.4)}
-        #ad-overlay .ad-skip-btn.show{display:inline-block}
-        @media(max-width:480px){#topic-grid{gap:14px}.topic-title{font-size:16px!important}header h1{font-size:17px}.btn-ad{font-size:14px;padding:12px}#ad-overlay .ad-timer{font-size:48px}}
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f0f;
+            color: #ffffff;
+            min-height: 100vh;
+        }
+
+        /* ===== Header ===== */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background: #0f0f0f;
+            border-bottom: 1px solid #272727;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        header .logo {
+            font-size: 18px;
+            font-weight: 700;
+            color: #fff;
+        }
+        header .logo span {
+            color: #ff0000;
+        }
+        header .profile {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        header .profile .avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #2b7fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 600;
+            color: #fff;
+            overflow: hidden;
+        }
+        header .profile .avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        header .profile .username {
+            font-size: 14px;
+            color: #aaa;
+            display: none;
+        }
+        @media (min-width: 480px) {
+            header .profile .username {
+                display: block;
+            }
+        }
+
+        /* ===== Category Tabs ===== */
+        .categories {
+            display: flex;
+            gap: 8px;
+            padding: 12px 16px;
+            overflow-x: auto;
+            scrollbar-width: none;
+            background: #0f0f0f;
+            border-bottom: 1px solid #1a1a1a;
+        }
+        .categories::-webkit-scrollbar {
+            display: none;
+        }
+        .categories .tab {
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+            color: #aaa;
+            background: #1a1a1a;
+            white-space: nowrap;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: none;
+        }
+        .categories .tab.active {
+            background: #fff;
+            color: #0f0f0f;
+        }
+        .categories .tab:active {
+            transform: scale(0.95);
+        }
+
+        /* ===== Topic Grid ===== */
+        #topic-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+            padding: 16px;
+            padding-bottom: 80px;
+        }
+
+        /* ===== Topic Card ===== */
+        .topic-card {
+            background: #1a1a1a;
+            border-radius: 12px;
+            overflow: hidden;
+            transition: transform 0.2s ease;
+            cursor: pointer;
+        }
+        .topic-card:active {
+            transform: scale(0.98);
+        }
+
+        /* Thumbnail */
+        .thumbnail-container {
+            position: relative;
+            aspect-ratio: 16/9;
+            background: #2a2a2a;
+            overflow: hidden;
+        }
+        .thumbnail-container img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .thumbnail-container .lock-icon {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: rgba(0, 0, 0, 0.7);
+            border-radius: 50%;
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            color: #fff;
+        }
+        .thumbnail-container .lock-icon.unlocked {
+            background: rgba(34, 197, 94, 0.8);
+        }
+
+        /* Video Info */
+        .video-info {
+            padding: 12px 14px;
+        }
+        .video-info .title {
+            font-size: 16px;
+            font-weight: 600;
+            line-height: 1.3;
+            color: #fff;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .video-info .channel-name {
+            font-size: 13px;
+            color: #aaa;
+            margin-top: 4px;
+        }
+        .video-info .meta {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: #888;
+            margin-top: 4px;
+        }
+        .video-info .meta .dot {
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: #888;
+        }
+
+        /* Unlock Progress */
+        .unlock-progress {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px 14px 14px;
+            border-top: 1px solid #272727;
+        }
+        .unlock-progress .progress-bar {
+            flex: 1;
+            height: 4px;
+            border-radius: 2px;
+            background: #2a2a2a;
+            overflow: hidden;
+        }
+        .unlock-progress .progress-bar .fill {
+            height: 100%;
+            border-radius: 2px;
+            background: #ff0000;
+            transition: width 0.5s ease;
+        }
+        .unlock-progress .progress-bar .fill.done {
+            background: #22c55e;
+        }
+        .unlock-progress .label {
+            font-size: 12px;
+            color: #aaa;
+            white-space: nowrap;
+        }
+
+        /* ===== Ad Overlay ===== */
+        #ad-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 9999;
+            background: rgba(0, 0, 0, 0.9);
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            padding: 20px;
+        }
+        #ad-overlay.show {
+            display: flex;
+        }
+        #ad-overlay .ad-content {
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+        #ad-overlay .ad-content iframe {
+            width: 100%;
+            height: 60vh;
+            border: none;
+            border-radius: 12px;
+            background: #1a1a1a;
+        }
+        #ad-overlay .ad-timer {
+            color: #fff;
+            font-size: 48px;
+            font-weight: 700;
+            margin: 16px 0;
+        }
+        #ad-overlay .ad-timer span {
+            color: #ff0000;
+        }
+        #ad-overlay .ad-label {
+            color: #aaa;
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+        #ad-overlay .ad-skip-btn {
+            background: #22c55e;
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            padding: 12px 30px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            display: none;
+            margin-top: 16px;
+        }
+        #ad-overlay .ad-skip-btn.show {
+            display: inline-block;
+        }
+
+        /* ===== Loading ===== */
+        #loading {
+            text-align: center;
+            padding: 40px;
+            color: #888;
+            font-size: 16px;
+        }
+
+        /* ===== Responsive ===== */
+        @media (max-width: 480px) {
+            header .logo {
+                font-size: 16px;
+            }
+            .video-info .title {
+                font-size: 14px;
+            }
+            .unlock-progress .label {
+                font-size: 11px;
+            }
+            #ad-overlay .ad-timer {
+                font-size: 36px;
+            }
+            #ad-overlay .ad-content iframe {
+                height: 50vh;
+            }
+        }
+        @media (min-width: 768px) {
+            #topic-grid {
+                grid-template-columns: 1fr 1fr;
+                gap: 20px;
+            }
+        }
     </style>
 </head>
 <body>
-    <div id="app">
-        <header>
-            <h1>📹 ভিডিও টপিক</h1>
-            <div id="user-info"><span id="user-name"></span></div>
-        </header>
-        <div id="loading">⏳ লোড হচ্ছে...</div>
-        <div id="topic-grid"></div>
+
+    <!-- ===== HEADER ===== -->
+    <header>
+        <div class="logo">📹 <span>Viral</span> Zone</div>
+        <div class="profile" id="profileSection">
+            <span class="username" id="userNameDisplay">ইউজার</span>
+            <div class="avatar" id="avatarDisplay">
+                <span id="avatarText">U</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- ===== CATEGORIES ===== -->
+    <div class="categories" id="categoryTabs">
+        <button class="tab active" data-category="all">সব</button>
+        <button class="tab" data-category="trending">ট্রেন্ডিং</button>
+        <button class="tab" data-category="new">নতুন</button>
+        <button class="tab" data-category="popular">জনপ্রিয়</button>
     </div>
 
+    <!-- ===== TOPIC GRID ===== -->
+    <div id="loading">⏳ লোড হচ্ছে...</div>
+    <div id="topic-grid"></div>
+
+    <!-- ===== AD OVERLAY ===== -->
     <div id="ad-overlay">
         <div class="ad-content">
             <div class="ad-label">⏳ অ্যাড দেখুন</div>
+            <iframe id="adIframe" src=""></iframe>
             <div class="ad-timer"><span id="adTimer">0</span> সেকেন্ড</div>
             <button class="ad-skip-btn" id="adSkipBtn">✅ অ্যাড শেষ! আনলক করুন</button>
         </div>
@@ -70,14 +352,55 @@
     <script>
         (function() {
             'use strict';
-            console.log('App started - Rewarded Interstitial');
-            
+
+            console.log('App started - YouTube Style');
+
             var Telegram = null;
             try {
                 Telegram = window.Telegram.WebApp;
-                if (Telegram) Telegram.ready();
-            } catch(e) {}
+                if (Telegram) {
+                    Telegram.ready();
+                    console.log('Telegram WebApp ready');
+                }
+            } catch (e) {
+                console.log('Telegram WebApp not available');
+            }
 
+            // =============================================
+            // USER INFO
+            // =============================================
+            function getUserName() {
+                try {
+                    if (Telegram && Telegram.initDataUnsafe && Telegram.initDataUnsafe.user) {
+                        return Telegram.initDataUnsafe.user.first_name || 'ইউজার';
+                    }
+                    return 'ইউজার';
+                } catch (e) {
+                    return 'ইউজার';
+                }
+            }
+
+            function getUserId() {
+                try {
+                    if (Telegram && Telegram.initDataUnsafe && Telegram.initDataUnsafe.user) {
+                        return Telegram.initDataUnsafe.user.id;
+                    }
+                    return null;
+                } catch (e) {
+                    return null;
+                }
+            }
+
+            // =============================================
+            // DISPLAY USER INFO
+            // =============================================
+            var userName = getUserName();
+            document.getElementById('userNameDisplay').textContent = userName;
+            document.getElementById('avatarText').textContent = userName.charAt(0).toUpperCase();
+
+            // =============================================
+            // API & STATE
+            // =============================================
             var API_BASE = '/api';
             var topics = [];
             var unlockedTopics = {};
@@ -88,260 +411,211 @@
             var totalAdsRequired = 0;
             var adCount = 0;
 
-            function getUserId() {
-                try {
-                    if (Telegram && Telegram.initDataUnsafe && Telegram.initDataUnsafe.user) {
-                        return Telegram.initDataUnsafe.user.id;
-                    }
-                    return null;
-                } catch(e) { return null; }
-            }
+            var AD_LINK = 'https://www.profitableratecpmnetwork.com/rispia5p4?key=7f0f8316968997cb73fa9559c2c685a3';
 
-            function getUserName() {
-                try {
-                    if (Telegram && Telegram.initDataUnsafe && Telegram.initDataUnsafe.user) {
-                        return Telegram.initDataUnsafe.user.first_name || 'ইউজার';
-                    }
-                    return 'ইউজার';
-                } catch(e) { return 'ইউজার'; }
-            }
-
-            function getThumbnailUrl(topic) {
-                if (topic.thumbnail) return API_BASE + '/thumbnail/' + topic.thumbnail;
-                if (topic.thumbnails && topic.thumbnails.length > 0) return API_BASE + '/thumbnail/' + topic.thumbnails[0];
-                return null;
-            }
-
-            function isTopicUnlocked(topicId) {
-                return unlockedTopics[topicId] === true;
-            }
-
+            // =============================================
+            // RENDER TOPICS (YouTube Style)
+            // =============================================
             function renderTopics() {
                 var grid = document.getElementById('topic-grid');
                 var loading = document.getElementById('loading');
+
                 if (!topics || topics.length === 0) {
                     loading.textContent = '📭 এখনো কোনো টপিক যোগ করা হয়নি';
                     return;
                 }
+
                 loading.style.display = 'none';
                 grid.innerHTML = '';
 
                 topics.forEach(function(topic) {
                     var card = document.createElement('div');
                     card.className = 'topic-card';
-                    var videoCount = topic.videoCount || (topic.videos ? topic.videos.length : 0);
-                    var thumbUrl = getThumbnailUrl(topic);
-                    var adsRequired = topic.adsRequired || 0;
-                    var topicUnlocked = isTopicUnlocked(topic.id);
 
-                    if (topicUnlocked) card.classList.add('unlocked-card');
+                    var videoCount = topic.videoCount || (topic.videos ? topic.videos.length : 0);
+                    var thumbUrl = topic.thumbnail ? API_BASE + '/thumbnail/' + topic.thumbnail : null;
+                    var adsRequired = topic.adsRequired || 0;
+                    var topicUnlocked = unlockedTopics[topic.id] === true;
 
                     var thumbnailHtml = '';
                     if (thumbUrl) {
-                        thumbnailHtml = '<img src="' + thumbUrl + '" alt="' + (topic.title || 'টপিক') + '" onerror="this.parentElement.innerHTML=\'<span style=\'font-size:60px;color:#555;\'>📹</span>\'">';
+                        thumbnailHtml = '<img src="' + thumbUrl + '" alt="' + (topic.title || 'টপিক') +
+                            '" onerror="this.parentElement.innerHTML=\'<span style=\'font-size:40px;\'>📹</span>\'">';
+                    } else {
+                        thumbnailHtml = '<span style="font-size:40px;color:#555;">📹</span>';
                     }
 
-                    var btnHtml = '';
-                    if (topicUnlocked) {
-                        btnHtml = '<button class="btn-ad unlocked" disabled>✅ আনলক করা আছে</button>';
-                    } else {
-                        btnHtml = '<button class="btn-ad watch" data-topic-id="' + topic.id + '" data-ads="' + adsRequired + '">🎬 ' + adsRequired + 'টি অ্যাড দেখে আনলক করুন</button>';
-                    }
+                    var lockIcon = topicUnlocked ? '🔓' : '🔒';
+                    var lockClass = topicUnlocked ? 'lock-icon unlocked' : 'lock-icon';
+
+                    var progressPercent = topicUnlocked ? 100 : 0;
+                    var progressText = topicUnlocked ?
+                        '✅ আনলক করা আছে' :
+                        '🔒 আনলক করতে ' + adsRequired + 'টি অ্যাড দেখুন';
 
                     card.innerHTML = `
                         <div class="thumbnail-container">
-                            ${thumbnailHtml || '<span style="font-size:60px;color:#555;">📹</span>'}
-                            <div class="lock-icon ${topicUnlocked ? 'unlocked' : ''}">${topicUnlocked ? '🔓' : '🔒'}</div>
-                            <div class="video-count-badge">📹 ${videoCount}টি ভিডিও</div>
+                            ${thumbnailHtml}
+                            <div class="${lockClass}">${lockIcon}</div>
                         </div>
-                        <div class="topic-info">
-                            <div class="topic-title">${topic.title || 'নামবিহীন টপিক'}</div>
-                            <div class="topic-meta">📹 ${videoCount}টি ভিডিও • 🔢 ${adsRequired}টি অ্যাড দেখে আনলক করুন</div>
-                            ${topicUnlocked ? '<div class="timeout-badge unlocked-badge">✅ ৩০ মিনিটের জন্য আনলক করা আছে</div>' : '<div class="timeout-badge">⏳ ৩০ মিনিট পর আবার লক হবে</div>'}
+                        <div class="video-info">
+                            <div class="title">${topic.title || 'নামবিহীন টপিক'}</div>
+                            <div class="channel-name">📹 ${videoCount}টি ভিডিও</div>
+                            <div class="meta">
+                                <span>🔢 ${adsRequired}টি অ্যাড</span>
+                                <span class="dot"></span>
+                                <span>${topicUnlocked ? '✅ আনলকড' : '🔒 লকড'}</span>
+                            </div>
                         </div>
-                        <div class="topic-actions">
-                            ${btnHtml}
-                            <div class="ad-progress" id="progress-${topic.id}"></div>
+                        <div class="unlock-progress">
+                            <div class="progress-bar">
+                                <div class="fill ${topicUnlocked ? 'done' : ''}" style="width:${progressPercent}%;"></div>
+                            </div>
+                            <span class="label">${progressText}</span>
                         </div>
                     `;
 
-                    grid.appendChild(card);
-
-                    var btn = card.querySelector('.btn-ad.watch');
-                    if (btn) {
-                        btn.addEventListener('click', function(e) {
+                    // ক্লিক করলে অ্যাড দেখাবে (যদি লকড থাকে)
+                    if (!topicUnlocked) {
+                        card.addEventListener('click', function(e) {
                             e.stopPropagation();
-                            var topicId = this.getAttribute('data-topic-id');
-                            var topicObj = topics.find(function(t) { return t.id === topicId; });
-                            if (topicObj) {
-                                startAdWatch(topicObj, this);
-                            }
+                            startAdWatch(topic, card);
                         });
                     }
+
+                    grid.appendChild(card);
                 });
             }
 
-            function unlockTopic(topic, btnElement) {
-                unlockedTopics[topic.id] = true;
-                btnElement.textContent = '✅ আনলক করা আছে';
-                btnElement.className = 'btn-ad unlocked';
-                btnElement.disabled = true;
-
-                var card = btnElement.closest('.topic-card');
-                if (card) card.classList.add('unlocked-card');
-
-                var progressEl = document.getElementById('progress-' + topic.id);
-                if (progressEl) {
-                    progressEl.textContent = '🎉 টপিকটি আনলক হয়েছে! (৩০ মিনিটের জন্য)';
-                    progressEl.className = 'ad-progress';
-                }
-
-                isWatching = false;
-                adCount = 0;
-
-                var lockIcon = card.querySelector('.lock-icon');
-                if (lockIcon) {
-                    lockIcon.textContent = '🔓';
-                    lockIcon.className = 'lock-icon unlocked';
-                }
-
-                var timeoutBadge = card.querySelector('.timeout-badge');
-                if (timeoutBadge) {
-                    timeoutBadge.textContent = '✅ ৩০ মিনিটের জন্য আনলক করা আছে';
-                    timeoutBadge.className = 'timeout-badge unlocked-badge';
-                }
-
-                var userId = getUserId();
-                if (userId) {
-                    fetch(API_BASE + '/unlock-topic', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ userId: userId, topicId: topic.id })
-                    }).catch(function(err) { console.error('Unlock error:', err); });
-                }
-            }
-
-            function startAdWatch(topic, btnElement) {
+            // =============================================
+            // AD WATCH SYSTEM
+            // =============================================
+            function startAdWatch(topic, card) {
                 if (isWatching) return;
-                totalAdsRequired = parseInt(btnElement.getAttribute('data-ads')) || 1;
+
+                totalAdsRequired = topic.adsRequired || 1;
                 adCount = 0;
                 currentTopic = topic;
-                currentBtn = btnElement;
                 isWatching = true;
 
-                btnElement.disabled = true;
-                btnElement.className = 'btn-ad watching';
-                btnElement.textContent = '⏳ অ্যাড দেখছেন... (0/' + totalAdsRequired + ')';
-
-                var progressEl = document.getElementById('progress-' + topic.id);
-                if (progressEl) {
-                    progressEl.textContent = 'প্রগ্রেস: 0/' + totalAdsRequired;
-                    progressEl.className = 'ad-progress';
-                }
                 showAd();
             }
 
             function showAd() {
                 var overlay = document.getElementById('ad-overlay');
+                var iframe = document.getElementById('adIframe');
                 var skipBtn = document.getElementById('adSkipBtn');
                 var timerDisplay = document.getElementById('adTimer');
 
+                var totalTime = 15;
+                var timeLeft = totalTime;
+
                 overlay.classList.add('show');
+                iframe.src = AD_LINK;
                 skipBtn.className = 'ad-skip-btn';
                 skipBtn.disabled = true;
-                timerDisplay.textContent = '15';
+                timerDisplay.textContent = timeLeft;
 
-                // Rewarded Interstitial - OMG
-                try {
-                    show_11737734().then(function() {
-                        // অ্যাড সম্পূর্ণ হয়েছে - রিওয়ার্ড দিন
-                        console.log('Ad completed - Reward user');
-                        completeAd();
-                    }).catch(function(e) {
-                        console.error('Ad error:', e);
-                        resetAdButton();
-                        overlay.classList.remove('show');
-                    });
-                } catch(error) {
-                    console.error('Ad init error:', error);
-                    resetAdButton();
-                    overlay.classList.remove('show');
-                }
-
-                // টাইমার (সুরক্ষার জন্য)
-                var timeLeft = 15;
                 if (timerInterval) clearInterval(timerInterval);
+
                 timerInterval = setInterval(function() {
                     timeLeft--;
                     timerDisplay.textContent = timeLeft;
                     if (timeLeft <= 0) {
                         clearInterval(timerInterval);
                         timerInterval = null;
+                        skipBtn.className = 'ad-skip-btn show';
+                        skipBtn.disabled = false;
+                        timerDisplay.textContent = '✅';
+                        skipBtn.onclick = function() {
+                            onAdComplete();
+                        };
                     }
                 }, 1000);
             }
 
-            function completeAd() {
-                var overlay = document.getElementById('ad-overlay');
-                var skipBtn = document.getElementById('adSkipBtn');
-                var timerDisplay = document.getElementById('adTimer');
-
-                if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-
-                skipBtn.className = 'ad-skip-btn show';
-                skipBtn.disabled = false;
-                timerDisplay.textContent = '✅';
-                skipBtn.onclick = function() { onAdComplete(); };
-            }
-
-            function resetAdButton() {
-                if (currentBtn) {
-                    currentBtn.disabled = false;
-                    currentBtn.className = 'btn-ad watch';
-                    currentBtn.textContent = '🎬 ' + totalAdsRequired + 'টি অ্যাড দেখে আনলক করুন';
-                }
-                isWatching = false;
-            }
-
             function onAdComplete() {
                 var overlay = document.getElementById('ad-overlay');
+                var iframe = document.getElementById('adIframe');
+
                 overlay.classList.remove('show');
-                if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+                iframe.src = '';
+                if (timerInterval) {
+                    clearInterval(timerInterval);
+                    timerInterval = null;
+                }
 
                 adCount++;
-                if (currentBtn) {
-                    currentBtn.textContent = '⏳ অ্যাড দেখছেন... (' + adCount + '/' + totalAdsRequired + ')';
-                    var progressEl = document.getElementById('progress-' + (currentTopic ? currentTopic.id : ''));
-                    if (progressEl) progressEl.textContent = 'প্রগ্রেস: ' + adCount + '/' + totalAdsRequired;
-                }
 
                 if (adCount >= totalAdsRequired) {
                     adCount = 0;
-                    if (currentTopic && currentBtn) unlockTopic(currentTopic, currentBtn);
+                    unlockTopic(currentTopic);
                 } else {
-                    setTimeout(function() { showAd(); }, 500);
+                    setTimeout(function() {
+                        showAd();
+                    }, 500);
                 }
             }
 
+            function unlockTopic(topic) {
+                unlockedTopics[topic.id] = true;
+                isWatching = false;
+
+                var userId = getUserId();
+                if (userId) {
+                    fetch(API_BASE + '/unlock-topic', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            userId: userId,
+                            topicId: topic.id
+                        })
+                    }).catch(function(err) {
+                        console.error('Unlock error:', err);
+                    });
+                }
+
+                renderTopics();
+            }
+
+            // =============================================
+            // LOAD DATA
+            // =============================================
             function loadUnlockedStatus() {
                 var userId = getUserId();
-                if (!userId) { renderTopics(); return; }
+                if (!userId) {
+                    renderTopics();
+                    return;
+                }
+
                 fetch(API_BASE + '/user-unlocked/' + userId)
-                    .then(function(response) { if (!response.ok) throw new Error('Network error'); return response.json(); })
+                    .then(function(response) {
+                        if (!response.ok) throw new Error('Network error');
+                        return response.json();
+                    })
                     .then(function(data) {
                         unlockedTopics = {};
                         if (data.topics) {
-                            data.topics.forEach(function(topicId) { unlockedTopics[topicId] = true; });
+                            data.topics.forEach(function(topicId) {
+                                unlockedTopics[topicId] = true;
+                            });
                         }
                         renderTopics();
                     })
-                    .catch(function(error) { console.error('Error loading unlocked status:', error); renderTopics(); });
+                    .catch(function(error) {
+                        console.error('Error loading unlocked status:', error);
+                        renderTopics();
+                    });
             }
 
             function loadTopics() {
                 fetch(API_BASE + '/topics')
-                    .then(function(response) { if (!response.ok) throw new Error('Network error'); return response.json(); })
+                    .then(function(response) {
+                        if (!response.ok) throw new Error('Network error');
+                        return response.json();
+                    })
                     .then(function(data) {
+                        console.log('Topics loaded:', data.length);
                         topics = data;
                         loadUnlockedStatus();
                     })
@@ -351,13 +625,34 @@
                     });
             }
 
-            function init() {
-                document.getElementById('user-name').textContent = getUserName();
-                loadTopics();
+            // =============================================
+            // CATEGORY FILTER
+            // =============================================
+            document.querySelectorAll('.tab').forEach(function(tab) {
+                tab.addEventListener('click', function() {
+                    document.querySelectorAll('.tab').forEach(function(t) {
+                        t.classList.remove('active');
+                    });
+                    this.classList.add('active');
+                    var cat = this.getAttribute('data-category');
+                    filterTopics(cat);
+                });
+            });
+
+            function filterTopics(category) {
+                // ডেমো ফিল্টার - আসলে সব দেখায়
+                // আপনি চাইলে এখানে ফিল্টার লজিক যোগ করতে পারেন
+                renderTopics();
             }
 
-            setInterval(function() { loadUnlockedStatus(); }, 60000);
-            setTimeout(init, 100);
+            // =============================================
+            // INIT
+            // =============================================
+            setInterval(function() {
+                loadUnlockedStatus();
+            }, 60000);
+
+            setTimeout(loadTopics, 100);
         })();
     </script>
 </body>
