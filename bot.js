@@ -569,6 +569,50 @@ bot.command('checkdb', async (ctx) => {
   }
 });
 
+// =============================================
+// 🚨 জরুরি ডায়াগনস্টিক কমান্ড - ১০০% কাজ করবে
+// =============================================
+
+bot.command('testdb', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) {
+    return ctx.reply('⛔ শুধুমাত্র অ্যাডমিনের জন্য।');
+  }
+  
+  try {
+    const usersSnapshot = await db.collection('users').get();
+    const userCount = usersSnapshot.size;
+    
+    const topicsSnapshot = await db.collection('topics').get();
+    const topicCount = topicsSnapshot.size;
+    
+    let reply = `📊 ডেটাবেস রিপোর্ট:\n\n`;
+    reply += `👥 ইউজার: ${userCount}টি\n`;
+    reply += `📁 টপিক: ${topicCount}টি\n\n`;
+    
+    if (topicCount > 0) {
+      reply += `📌 টপিকের নাম:\n`;
+      topicsSnapshot.docs.forEach((doc, i) => {
+        const data = doc.data();
+        reply += `${i+1}. ${data.title || 'নামবিহীন'} (${doc.id})\n`;
+      });
+    }
+    
+    if (userCount > 0) {
+      reply += `\n👤 ইউজার:\n`;
+      usersSnapshot.docs.forEach((doc, i) => {
+        const data = doc.data();
+        reply += `${i+1}. ${data.firstName || 'N/A'} (${data.verified ? '✅' : '❌'})\n`;
+      });
+    }
+    
+    await ctx.reply(reply);
+    
+  } catch (error) {
+    console.error('❌ testdb error:', error);
+    await ctx.reply('❌ ডেটাবেস চেক করতে সমস্যা: ' + error.message);
+  }
+});
+
 // ============ API ENDPOINTS ============
 
 app.get('/api/users/verify/:userId', async (req, res) => {
