@@ -13,8 +13,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// Firebase JSON ফাইল ব্যবহার করুন (আপনার ফাইলের নাম দিন)
-const serviceAccount = require('./telegram-bot-project-ddb4e-firebase-adminsdk-fbsvc-ac1eb43e9c.json');
+// ✅ .env থেকে Firebase JSON ব্যবহার করুন
+const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
@@ -281,7 +281,6 @@ bot.on('text', async (ctx) => {
   const userId = ctx.from.id;
   const text = ctx.message.text;
   
-  // কমান্ড হলে থামুন
   if (text.startsWith('/')) {
     return;
   }
@@ -574,10 +573,6 @@ bot.command('checkdb', async (ctx) => {
   }
 });
 
-// =============================================
-// 🚨 জরুরি ডায়াগনস্টিক কমানড
-// =============================================
-
 bot.command('testdb', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) {
     return ctx.reply('⛔ শুধুমাত্র অ্যাডমিনের জন্য।');
@@ -828,4 +823,65 @@ app.listen(process.env.PORT || 3000, () => {
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));// =============================================
+// 🚨 জরুরি ফিক্স - সরাসরি ডেটাবেস থেকে ডেটা পড়া
+// =============================================
+
+bot.command('list2', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) {
+    return ctx.reply('⛔ শুধুমাত্র অ্যাডমিনের জন্য।');
+  }
+  
+  try {
+    // সরাসরি Firestore থেকে ডেটা পড়া
+    const topicsRef = db.collection('topics');
+    const snapshot = await topicsRef.get();
+    
+    if (snapshot.empty) {
+      return ctx.reply('📭 এখনো কোনো টপিক যোগ করা হয়নি।');
+    }
+    
+    let message = '📋 টপিক লিস্ট (নতুন সিস্টেম):\n\n';
+    let count = 0;
+    snapshot.forEach(doc => {
+      count++;
+      const data = doc.data();
+      message += `${count}. ${data.title || 'নামবিহীন'}\n`;
+      message += `   🆔 ${doc.id}\n`;
+      message += `   📹 ${data.videoCount || 0}টি ভিডিও\n`;
+      message += `   🔢 ${data.adsRequired || 0}টি অ্যাড\n\n`;
+    });
+    
+    await ctx.reply(message);
+  } catch (error) {
+    console.error('❌ list2 error:', error);
+    await ctx.reply('❌ তালিকা দেখাতে সমস্যা: ' + error.message);
+  }
+});
+
+bot.command('admin2', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) {
+    return ctx.reply('⛔ শুধুমাত্র অ্যাডমিনের জন্য।');
+  }
+  
+  try {
+    const usersRef = db.collection('users');
+    const snapshot = await usersRef.get();
+    
+    const users = [];
+    snapshot.forEach(doc => {
+      users.push(doc.data());
+    });
+    
+    const verifiedUsers = users.filter(u => u.verified === true);
+    
+    await ctx.reply(
+      `📊 অ্যাডমিন প্যানেল (নতুন সিস্টেম)\n\n` +
+      `✅ যাচাইকৃত: ${verifiedUsers.length}\n` +
+      `👥 মোট ইউজার: ${users.length}`
+    );
+  } catch (error) {
+    console.error('❌ admin2 error:', error);
+    await ctx.reply('❌ অ্যাডমিন প্যানেল লোড করতে সমস্যা: ' + error.message);
+  }
+});
