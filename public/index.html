@@ -284,7 +284,7 @@
         (function() {
             'use strict';
             
-            console.log('App started - 15 Second Ad System');
+            console.log('App started - 2 Ad Links Rotation');
             
             var Telegram = null;
             try {
@@ -301,15 +301,20 @@
             var topics = [];
             var unlockedTopics = {};
             var isWatching = false;
-            var watchTimers = {};
             var currentTopic = null;
             var currentBtn = null;
-            var adCount = 0;
-            var adTotal = 0;
             var timerInterval = null;
 
-            // Adsterra লিংক
-            var AD_LINK = 'https://www.profitableratecpmnetwork.com/gg75fk7m?key=bff396eaed0905f21875184a5176e894';
+            // ✅ ২টি Adsterra লিংক
+            var AD_LINKS = [
+                'https://www.profitableratecpmnetwork.com/gg75fk7m?key=bff396eaed0905f21875184a5176e894',
+                'https://www.profitableratecpmnetwork.com/rispia5p4?key=7f0f8316968997cb73fa9559c2c685a3'
+            ];
+
+            function getRandomAdLink() {
+                var randomIndex = Math.floor(Math.random() * AD_LINKS.length);
+                return AD_LINKS[randomIndex];
+            }
 
             function getUserId() {
                 try {
@@ -360,7 +365,6 @@
                     card.className = 'topic-card';
                     var videoCount = topic.videoCount || (topic.videos ? topic.videos.length : 0);
                     var thumbUrl = getThumbnailUrl(topic);
-                    var adsRequired = topic.adsRequired || 0;
                     var topicUnlocked = isTopicUnlocked(topic.id);
                     
                     var thumbnailHtml = '';
@@ -372,7 +376,7 @@
                     if (topicUnlocked) {
                         btnHtml = '<button class="btn-ad unlocked" disabled>✅ আনলক করা আছে</button>';
                     } else {
-                        btnHtml = '<button class="btn-ad watch" data-topic-id="' + topic.id + '" data-ads="' + adsRequired + '">🎬 ' + adsRequired + 'টি ১৫ সেকেন্ড অ্যাড দেখে আনলক করুন</button>';
+                        btnHtml = '<button class="btn-ad watch" data-topic-id="' + topic.id + '">🎬 ১টি অ্যাড দেখে আনলক করুন</button>';
                     }
                     
                     card.innerHTML = `
@@ -383,7 +387,7 @@
                         </div>
                         <div class="topic-info">
                             <div class="topic-title">${topic.title || 'নামবিহীন টপিক'}</div>
-                            <div class="topic-meta">🔢 ${adsRequired}টি ১৫ সেকেন্ড অ্যাড দেখে আনলক করুন</div>
+                            <div class="topic-meta">🎬 ১টি অ্যাড দেখে আনলক করুন</div>
                             ${topicUnlocked ? '<div class="timeout-badge">⏳ ৩০ মিনিট পর আবার লক হবে</div>' : ''}
                         </div>
                         <div class="topic-actions">
@@ -458,17 +462,15 @@
                 
                 currentTopic = topic;
                 currentBtn = btnElement;
-                adTotal = topic.adsRequired || 0;
-                adCount = 0;
                 isWatching = true;
                 
                 btnElement.disabled = true;
                 btnElement.className = 'btn-ad watching';
-                btnElement.textContent = '⏳ অ্যাড দেখছেন... (0/' + adTotal + ')';
+                btnElement.textContent = '⏳ অ্যাড দেখছেন...';
                 
                 var progressEl = document.getElementById('progress-' + topic.id);
                 if (progressEl) {
-                    progressEl.textContent = 'অগ্রগতি: 0/' + adTotal;
+                    progressEl.textContent = '⏳ অ্যাড দেখছেন... (১৫ সেকেন্ড)';
                 }
                 
                 showAd();
@@ -480,8 +482,12 @@
                 var skipBtn = document.getElementById('adSkipBtn');
                 var timerDisplay = document.getElementById('adTimer');
                 
+                // র্যান্ডম লিংক সিলেক্ট করুন (২টি থেকে)
+                var adLink = getRandomAdLink();
+                console.log('Showing ad link:', adLink);
+                
                 overlay.classList.add('show');
-                iframe.src = AD_LINK;
+                iframe.src = adLink;
                 skipBtn.className = 'ad-skip-btn';
                 skipBtn.disabled = true;
                 
@@ -522,27 +528,8 @@
                     timerInterval = null;
                 }
                 
-                adCount++;
-                updateAdProgress();
-                
-                if (adCount >= adTotal) {
-                    if (currentTopic && currentBtn) {
-                        unlockTopic(currentTopic, currentBtn);
-                    }
-                } else {
-                    setTimeout(function() {
-                        showAd();
-                    }, 500);
-                }
-            }
-
-            function updateAdProgress() {
-                var progressEl = document.getElementById('progress-' + (currentTopic ? currentTopic.id : ''));
-                if (progressEl) {
-                    progressEl.textContent = 'অগ্রগতি: ' + adCount + '/' + adTotal;
-                }
-                if (currentBtn) {
-                    currentBtn.textContent = '⏳ অ্যাড দেখছেন... (' + adCount + '/' + adTotal + ')';
+                if (currentTopic && currentBtn) {
+                    unlockTopic(currentTopic, currentBtn);
                 }
             }
 
