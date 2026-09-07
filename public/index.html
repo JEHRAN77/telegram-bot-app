@@ -4,316 +4,76 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>📹 ভিডিও টপিক</title>
+    <script src="//libtl.com/sdk.js" data-zone="11737734" data-sdk="show_11737734"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0f0f0f;
-            color: #ffffff;
-            min-height: 100vh;
-        }
-
-        /* ===== Header ===== */
-        header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px 16px;
-            background: #0f0f0f;
-            border-bottom: 1px solid #272727;
-            position: sticky;
-            top: 0;
-            z-index: 10;
-        }
-        header .logo {
-            font-size: 18px;
-            font-weight: 700;
-            color: #fff;
-        }
-        header .logo span {
-            color: #ff0000;
-        }
-        header .profile {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        header .profile .avatar {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            background: #2b7fff;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 14px;
-            font-weight: 600;
-            color: #fff;
-            overflow: hidden;
-        }
-        header .profile .username {
-            font-size: 14px;
-            color: #aaa;
-            display: none;
-        }
-        @media (min-width: 480px) {
-            header .profile .username {
-                display: block;
-            }
-        }
-
-        /* ===== Category Tabs ===== */
-        .categories {
-            display: flex;
-            gap: 8px;
-            padding: 12px 16px;
-            overflow-x: auto;
-            scrollbar-width: none;
-            background: #0f0f0f;
-            border-bottom: 1px solid #1a1a1a;
-        }
-        .categories::-webkit-scrollbar {
-            display: none;
-        }
-        .categories .tab {
-            padding: 6px 16px;
-            border-radius: 20px;
-            font-size: 14px;
-            font-weight: 500;
-            color: #aaa;
-            background: #1a1a1a;
-            white-space: nowrap;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            border: none;
-        }
-        .categories .tab.active {
-            background: #fff;
-            color: #0f0f0f;
-        }
-        .categories .tab:active {
-            transform: scale(0.95);
-        }
-
-        /* ===== Topic Grid ===== */
-        #topic-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 16px;
-            padding: 16px;
-            padding-bottom: 80px;
-        }
-
-        /* ===== Topic Card ===== */
-        .topic-card {
-            background: #1a1a1a;
-            border-radius: 12px;
-            overflow: hidden;
-            transition: transform 0.2s ease;
-        }
-        .topic-card:active {
-            transform: scale(0.98);
-        }
-
-        /* Thumbnail */
-        .thumbnail-container {
-            position: relative;
-            aspect-ratio: 16/9;
-            background: #2a2a2a;
-            overflow: hidden;
-        }
-        .thumbnail-container img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-        .thumbnail-container .lock-icon {
-            position: absolute;
-            top: 8px;
-            right: 8px;
-            background: rgba(0, 0, 0, 0.7);
-            border-radius: 50%;
-            width: 28px;
-            height: 28px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 14px;
-            color: #fff;
-        }
-        .thumbnail-container .lock-icon.unlocked {
-            background: rgba(34, 197, 94, 0.8);
-        }
-
-        /* Video Info */
-        .video-info {
-            padding: 12px 14px;
-        }
-        .video-info .title {
-            font-size: 16px;
-            font-weight: 600;
-            line-height: 1.3;
-            color: #fff;
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
-            overflow: hidden;
-        }
-        .video-info .channel-name {
-            font-size: 13px;
-            color: #aaa;
-            margin-top: 4px;
-        }
-        .video-info .meta {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 13px;
-            color: #888;
-            margin-top: 4px;
-        }
-        .video-info .meta .dot {
-            width: 4px;
-            height: 4px;
-            border-radius: 50%;
-            background: #888;
-        }
-
-        /* ===== Unlock Button ===== */
-        .topic-actions {
-            padding: 0 14px 14px 14px;
-        }
-        .btn-unlock {
-            width: 100%;
-            padding: 12px;
-            border: none;
-            border-radius: 10px;
-            font-size: 15px;
-            font-weight: 600;
-            color: #fff;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            background: #dc2626;
-        }
-        .btn-unlock:active {
-            transform: scale(0.97);
-        }
-        .btn-unlock:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-        .btn-unlock.unlocked {
-            background: #22c55e;
-        }
-        .btn-unlock.watching {
-            background: #f59e0b;
-        }
-
-        /* ===== Ad Overlay ===== */
-        #ad-overlay {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            z-index: 9999;
-            background: rgba(0, 0, 0, 0.9);
-            justify-content: center;
-            align-items: center;
-            flex-direction: column;
-            padding: 20px;
-        }
-        #ad-overlay.show {
-            display: flex;
-        }
-        #ad-overlay .ad-content {
-            width: 100%;
-            max-width: 400px;
-            text-align: center;
-        }
-        #ad-overlay .ad-content iframe {
-            width: 100%;
-            height: 60vh;
-            border: none;
-            border-radius: 12px;
-            background: #1a1a1a;
-        }
-        #ad-overlay .ad-timer {
-            color: #fff;
-            font-size: 48px;
-            font-weight: 700;
-            margin: 16px 0;
-        }
-        #ad-overlay .ad-timer span {
-            color: #ff0000;
-        }
-        #ad-overlay .ad-label {
-            color: #aaa;
-            font-size: 16px;
-            margin-bottom: 10px;
-        }
-        #ad-overlay .ad-skip-btn {
-            background: #22c55e;
-            color: #fff;
-            border: none;
-            border-radius: 10px;
-            padding: 12px 30px;
-            font-size: 18px;
-            font-weight: 600;
-            cursor: pointer;
-            display: none;
-            margin-top: 16px;
-        }
-        #ad-overlay .ad-skip-btn.show {
-            display: inline-block;
-        }
-
-        /* ===== Loading ===== */
-        #loading {
-            text-align: center;
-            padding: 40px;
-            color: #888;
-            font-size: 16px;
-        }
-
-        /* ===== Responsive ===== */
-        @media (max-width: 480px) {
-            header .logo {
-                font-size: 16px;
-            }
-            .video-info .title {
-                font-size: 14px;
-            }
-            .btn-unlock {
-                font-size: 14px;
-                padding: 10px;
-            }
-            #ad-overlay .ad-timer {
-                font-size: 36px;
-            }
-            #ad-overlay .ad-content iframe {
-                height: 50vh;
-            }
-        }
-        @media (min-width: 768px) {
-            #topic-grid {
-                grid-template-columns: 1fr 1fr;
-                gap: 20px;
-            }
-        }
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f0f0f;color:#fff;min-height:100vh}
+        
+        /* Header */
+        header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#0f0f0f;border-bottom:1px solid #272727;position:sticky;top:0;z-index:10}
+        header .logo{font-size:18px;font-weight:700;color:#fff}
+        header .logo span{color:#ff0000}
+        header .profile{display:flex;align-items:center;gap:10px}
+        header .profile .avatar{width:32px;height:32px;border-radius:50%;background:#2b7fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;color:#fff;overflow:hidden}
+        header .profile .username{font-size:14px;color:#aaa;display:none}
+        @media(min-width:480px){header .profile .username{display:block}}
+        
+        /* Categories */
+        .categories{display:flex;gap:8px;padding:12px 16px;overflow-x:auto;scrollbar-width:none;background:#0f0f0f;border-bottom:1px solid #1a1a1a}
+        .categories::-webkit-scrollbar{display:none}
+        .categories .tab{padding:6px 16px;border-radius:20px;font-size:14px;font-weight:500;color:#aaa;background:#1a1a1a;white-space:nowrap;cursor:pointer;transition:all .3s ease;border:none}
+        .categories .tab.active{background:#fff;color:#0f0f0f}
+        .categories .tab:active{transform:scale(.95)}
+        
+        /* Grid */
+        #topic-grid{display:grid;grid-template-columns:1fr;gap:16px;padding:16px;padding-bottom:80px}
+        @media(min-width:768px){#topic-grid{grid-template-columns:1fr 1fr;gap:20px}}
+        
+        /* Card */
+        .topic-card{background:#1a1a1a;border-radius:12px;overflow:hidden;transition:transform .2s ease}
+        .topic-card:active{transform:scale(.98)}
+        .thumbnail-container{position:relative;aspect-ratio:16/9;background:#2a2a2a;overflow:hidden}
+        .thumbnail-container img{width:100%;height:100%;object-fit:cover}
+        .thumbnail-container .lock-icon{position:absolute;top:8px;right:8px;background:rgba(0,0,0,.7);border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff}
+        .thumbnail-container .lock-icon.unlocked{background:rgba(34,197,94,.8)}
+        
+        /* Info */
+        .video-info{padding:12px 14px}
+        .video-info .title{font-size:16px;font-weight:600;line-height:1.3;color:#fff;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+        .video-info .channel-name{font-size:13px;color:#aaa;margin-top:4px}
+        .video-info .meta{display:flex;align-items:center;gap:8px;font-size:13px;color:#888;margin-top:4px}
+        .video-info .meta .dot{width:4px;height:4px;border-radius:50%;background:#888}
+        
+        /* Button */
+        .topic-actions{padding:0 14px 14px 14px}
+        .btn-unlock{width:100%;padding:12px;border:none;border-radius:10px;font-size:15px;font-weight:600;color:#fff;cursor:pointer;transition:all .3s ease;background:#dc2626}
+        .btn-unlock:active{transform:scale(.97)}
+        .btn-unlock:disabled{opacity:.6;cursor:not-allowed}
+        .btn-unlock.unlocked{background:#22c55e}
+        .btn-unlock.watching{background:#f59e0b}
+        
+        /* Loading */
+        #loading{text-align:center;padding:40px;color:#888;font-size:16px}
+        
+        /* Ad Overlay */
+        #ad-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;background:rgba(0,0,0,.9);justify-content:center;align-items:center;flex-direction:column;padding:20px}
+        #ad-overlay.show{display:flex}
+        #ad-overlay .ad-content{width:100%;max-width:400px;text-align:center}
+        #ad-overlay .ad-timer{color:#fff;font-size:48px;font-weight:700;margin:16px 0}
+        #ad-overlay .ad-timer span{color:#ff0000}
+        #ad-overlay .ad-label{color:#aaa;font-size:16px;margin-bottom:10px}
+        #ad-overlay .ad-skip-btn{background:#22c55e;color:#fff;border:none;border-radius:10px;padding:12px 30px;font-size:18px;font-weight:600;cursor:pointer;display:none;margin-top:16px}
+        #ad-overlay .ad-skip-btn.show{display:inline-block}
+        
+        @media(max-width:480px){header .logo{font-size:16px}.video-info .title{font-size:14px}.btn-unlock{font-size:14px;padding:10px}#ad-overlay .ad-timer{font-size:36px}}
     </style>
 </head>
 <body>
 
-    <!-- ===== HEADER ===== -->
+    <!-- Header -->
     <header>
         <div class="logo">📹 <span>Viral</span> Zone</div>
-        <div class="profile" id="profileSection">
+        <div class="profile">
             <span class="username" id="userNameDisplay">ইউজার</span>
             <div class="avatar" id="avatarDisplay">
                 <span id="avatarText">U</span>
@@ -321,23 +81,22 @@
         </div>
     </header>
 
-    <!-- ===== CATEGORIES ===== -->
-    <div class="categories" id="categoryTabs">
+    <!-- Categories -->
+    <div class="categories">
         <button class="tab active" data-category="all">সব</button>
         <button class="tab" data-category="trending">ট্রেন্ডিং</button>
         <button class="tab" data-category="new">নতুন</button>
         <button class="tab" data-category="popular">জনপ্রিয়</button>
     </div>
 
-    <!-- ===== TOPIC GRID ===== -->
+    <!-- Grid -->
     <div id="loading">⏳ লোড হচ্ছে...</div>
     <div id="topic-grid"></div>
 
-    <!-- ===== AD OVERLAY ===== -->
+    <!-- Ad Overlay -->
     <div id="ad-overlay">
         <div class="ad-content">
             <div class="ad-label">⏳ অ্যাড দেখুন</div>
-            <iframe id="adIframe" src=""></iframe>
             <div class="ad-timer"><span id="adTimer">0</span> সেকেন্ড</div>
             <button class="ad-skip-btn" id="adSkipBtn">✅ অ্যাড শেষ! আনলক করুন</button>
         </div>
@@ -347,32 +106,22 @@
     <script>
         (function() {
             'use strict';
-
-            console.log('App started - With Button');
+            console.log('App started');
 
             var Telegram = null;
             try {
                 Telegram = window.Telegram.WebApp;
-                if (Telegram) {
-                    Telegram.ready();
-                    console.log('Telegram WebApp ready');
-                }
-            } catch (e) {
-                console.log('Telegram WebApp not available');
-            }
+                if (Telegram) Telegram.ready();
+            } catch (e) {}
 
-            // =============================================
-            // USER INFO
-            // =============================================
+            // ===== User Info =====
             function getUserName() {
                 try {
                     if (Telegram && Telegram.initDataUnsafe && Telegram.initDataUnsafe.user) {
                         return Telegram.initDataUnsafe.user.first_name || 'ইউজার';
                     }
                     return 'ইউজার';
-                } catch (e) {
-                    return 'ইউজার';
-                }
+                } catch (e) { return 'ইউজার'; }
             }
 
             function getUserId() {
@@ -381,21 +130,14 @@
                         return Telegram.initDataUnsafe.user.id;
                     }
                     return null;
-                } catch (e) {
-                    return null;
-                }
+                } catch (e) { return null; }
             }
 
-            // =============================================
-            // DISPLAY USER INFO
-            // =============================================
             var userName = getUserName();
             document.getElementById('userNameDisplay').textContent = userName;
             document.getElementById('avatarText').textContent = userName.charAt(0).toUpperCase();
 
-            // =============================================
-            // API & STATE
-            // =============================================
+            // ===== API =====
             var API_BASE = '/api';
             var topics = [];
             var unlockedTopics = {};
@@ -405,12 +147,9 @@
             var timerInterval = null;
             var totalAdsRequired = 0;
             var adCount = 0;
+            var adCompleted = false;
 
-            var AD_LINK = 'https://www.profitableratecpmnetwork.com/rispia5p4?key=7f0f8316968997cb73fa9559c2c685a3';
-
-            // =============================================
-            // RENDER TOPICS
-            // =============================================
+            // ===== Render Topics =====
             function renderTopics() {
                 var grid = document.getElementById('topic-grid');
                 var loading = document.getElementById('loading');
@@ -443,7 +182,6 @@
                     var lockIcon = topicUnlocked ? '🔓' : '🔒';
                     var lockClass = topicUnlocked ? 'lock-icon unlocked' : 'lock-icon';
 
-                    // ===== Button =====
                     var btnHtml = '';
                     if (topicUnlocked) {
                         btnHtml = '<button class="btn-unlock unlocked" disabled>✅ আনলক করা আছে</button>';
@@ -473,15 +211,12 @@
 
                     grid.appendChild(card);
 
-                    // ===== Button Event =====
                     var btn = card.querySelector('.btn-unlock');
                     if (btn && !topicUnlocked) {
                         btn.addEventListener('click', function(e) {
                             e.stopPropagation();
                             var topicId = this.getAttribute('data-topic-id');
-                            var topicObj = topics.find(function(t) {
-                                return t.id === topicId;
-                            });
+                            var topicObj = topics.find(function(t) { return t.id === topicId; });
                             if (topicObj) {
                                 currentBtn = this;
                                 startAdWatch(topicObj);
@@ -491,14 +226,13 @@
                 });
             }
 
-            // =============================================
-            // AD WATCH SYSTEM
-            // =============================================
+            // ===== OMG Rewarded Interstitial =====
             function startAdWatch(topic) {
                 if (isWatching) return;
 
                 totalAdsRequired = topic.adsRequired || 1;
                 adCount = 0;
+                adCompleted = false;
                 currentTopic = topic;
                 isWatching = true;
 
@@ -508,48 +242,67 @@
                     currentBtn.disabled = true;
                 }
 
-                showAd();
-            }
-
-            function showAd() {
                 var overlay = document.getElementById('ad-overlay');
-                var iframe = document.getElementById('adIframe');
                 var skipBtn = document.getElementById('adSkipBtn');
                 var timerDisplay = document.getElementById('adTimer');
 
-                var totalTime = 15;
-                var timeLeft = totalTime;
-
                 overlay.classList.add('show');
-                iframe.src = AD_LINK;
                 skipBtn.className = 'ad-skip-btn';
                 skipBtn.disabled = true;
-                timerDisplay.textContent = timeLeft;
+                timerDisplay.textContent = '15';
 
+                // OMG Rewarded Interstitial
+                try {
+                    show_11737734().then(function() {
+                        console.log('✅ Ad completed');
+                        adCompleted = true;
+                        completeAd();
+                    }).catch(function(e) {
+                        console.error('❌ Ad error:', e);
+                        resetAd();
+                    });
+                } catch (error) {
+                    console.error('❌ Ad init error:', error);
+                    resetAd();
+                }
+
+                var timeLeft = 15;
                 if (timerInterval) clearInterval(timerInterval);
-
                 timerInterval = setInterval(function() {
                     timeLeft--;
                     timerDisplay.textContent = timeLeft;
                     if (timeLeft <= 0) {
                         clearInterval(timerInterval);
                         timerInterval = null;
-                        skipBtn.className = 'ad-skip-btn show';
-                        skipBtn.disabled = false;
-                        timerDisplay.textContent = '✅';
-                        skipBtn.onclick = function() {
-                            onAdComplete();
-                        };
+                        // যদি OMG কাজ না করে, তাহলে টাইমার শেষে আনলক
+                        if (!adCompleted) {
+                            completeAd();
+                        }
                     }
                 }, 1000);
             }
 
+            function completeAd() {
+                var overlay = document.getElementById('ad-overlay');
+                var skipBtn = document.getElementById('adSkipBtn');
+                var timerDisplay = document.getElementById('adTimer');
+
+                if (timerInterval) {
+                    clearInterval(timerInterval);
+                    timerInterval = null;
+                }
+
+                skipBtn.className = 'ad-skip-btn show';
+                skipBtn.disabled = false;
+                timerDisplay.textContent = '✅';
+                skipBtn.onclick = function() {
+                    onAdComplete();
+                };
+            }
+
             function onAdComplete() {
                 var overlay = document.getElementById('ad-overlay');
-                var iframe = document.getElementById('adIframe');
-
                 overlay.classList.remove('show');
-                iframe.src = '';
                 if (timerInterval) {
                     clearInterval(timerInterval);
                     timerInterval = null;
@@ -566,14 +319,31 @@
                     unlockTopic(currentTopic);
                 } else {
                     setTimeout(function() {
-                        showAd();
+                        startAdWatch(currentTopic);
                     }, 500);
                 }
+            }
+
+            function resetAd() {
+                var overlay = document.getElementById('ad-overlay');
+                overlay.classList.remove('show');
+                if (timerInterval) {
+                    clearInterval(timerInterval);
+                    timerInterval = null;
+                }
+                if (currentBtn) {
+                    currentBtn.textContent = '🎬 ' + totalAdsRequired + 'টি অ্যাড দেখে আনলক করুন';
+                    currentBtn.className = 'btn-unlock';
+                    currentBtn.disabled = false;
+                }
+                isWatching = false;
+                adCompleted = false;
             }
 
             function unlockTopic(topic) {
                 unlockedTopics[topic.id] = true;
                 isWatching = false;
+                adCompleted = false;
 
                 if (currentBtn) {
                     currentBtn.textContent = '✅ আনলক করা আছে';
@@ -586,28 +356,17 @@
                     fetch(API_BASE + '/unlock-topic', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            userId: userId,
-                            topicId: topic.id
-                        })
-                    }).catch(function(err) {
-                        console.error('Unlock error:', err);
-                    });
+                        body: JSON.stringify({ userId: userId, topicId: topic.id })
+                    }).catch(function(err) { console.error('Unlock error:', err); });
                 }
 
-                // রি-রেন্ডার করবেন না, শুধু বাটন আপডেট করুন
-                // renderTopics();
+                renderTopics();
             }
 
-            // =============================================
-            // LOAD DATA
-            // =============================================
+            // ===== Load Data =====
             function loadUnlockedStatus() {
                 var userId = getUserId();
-                if (!userId) {
-                    renderTopics();
-                    return;
-                }
+                if (!userId) { renderTopics(); return; }
 
                 fetch(API_BASE + '/user-unlocked/' + userId)
                     .then(function(response) {
@@ -646,27 +405,17 @@
                     });
             }
 
-            // =============================================
-            // CATEGORY FILTER
-            // =============================================
+            // ===== Categories =====
             document.querySelectorAll('.tab').forEach(function(tab) {
                 tab.addEventListener('click', function() {
                     document.querySelectorAll('.tab').forEach(function(t) {
                         t.classList.remove('active');
                     });
                     this.classList.add('active');
-                    var cat = this.getAttribute('data-category');
-                    filterTopics(cat);
                 });
             });
 
-            function filterTopics(category) {
-                renderTopics();
-            }
-
-            // =============================================
-            // INIT
-            // =============================================
+            // ===== Init =====
             setInterval(function() {
                 loadUnlockedStatus();
             }, 60000);
