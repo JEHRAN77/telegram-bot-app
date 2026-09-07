@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>ভিডিও টপিক</title>
+    <title>📹 ভিডিও টপিক</title>
     <style>
         * {
             margin: 0;
@@ -47,8 +47,8 @@
         }
         #topic-grid {
             display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
+            grid-template-columns: 1fr;
+            gap: 16px;
         }
         .topic-card {
             background: #1a1a1a;
@@ -57,6 +57,10 @@
             border: 1px solid #272727;
             display: flex;
             flex-direction: column;
+            transition: transform 0.2s;
+        }
+        .topic-card:active {
+            transform: scale(0.98);
         }
         .thumbnail-container {
             position: relative;
@@ -74,59 +78,60 @@
         }
         .lock-icon {
             position: absolute;
-            top: 8px;
-            right: 8px;
-            background: rgba(0,0,0,0.7);
+            top: 12px;
+            right: 12px;
+            background: rgba(0,0,0,0.75);
             border-radius: 50%;
-            width: 28px;
-            height: 28px;
+            width: 32px;
+            height: 32px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 14px;
+            font-size: 16px;
             color: white;
         }
         .lock-icon.unlocked {
-            background: rgba(34, 197, 94, 0.8);
+            background: rgba(34, 197, 94, 0.85);
         }
         .video-count-badge {
             position: absolute;
-            bottom: 8px;
-            left: 8px;
-            background: rgba(0,0,0,0.7);
+            bottom: 12px;
+            left: 12px;
+            background: rgba(0,0,0,0.75);
             border-radius: 4px;
-            padding: 2px 8px;
-            font-size: 11px;
+            padding: 4px 10px;
+            font-size: 12px;
             color: #fff;
         }
         .topic-info {
-            padding: 10px 12px 8px 12px;
+            padding: 14px 16px 10px 16px;
             flex: 1;
         }
         .topic-title {
-            font-size: 14px;
+            font-size: 18px;
             font-weight: 600;
             color: #fff;
             line-height: 1.3;
             display: -webkit-box;
             -webkit-line-clamp: 2;
+            line-clamp: 2;
             -webkit-box-orient: vertical;
             overflow: hidden;
         }
         .topic-meta {
-            font-size: 12px;
+            font-size: 14px;
             color: #888;
             margin-top: 4px;
         }
         .topic-actions {
-            padding: 0 12px 12px 12px;
+            padding: 0 16px 16px 16px;
         }
         .btn-ad {
             width: 100%;
-            padding: 10px;
+            padding: 14px;
             border: none;
-            border-radius: 8px;
-            font-size: 14px;
+            border-radius: 10px;
+            font-size: 16px;
             font-weight: 600;
             color: #fff;
             cursor: pointer;
@@ -156,33 +161,101 @@
             background: #f59e0b;
         }
         .ad-progress {
-            font-size: 12px;
+            font-size: 13px;
             color: #fbbf24;
             text-align: center;
-            margin-top: 6px;
+            margin-top: 8px;
         }
         .timeout-badge {
-            font-size: 10px;
+            font-size: 11px;
             color: #f87171;
-            margin-top: 2px;
+            margin-top: 4px;
         }
-        .hidden {
-            display: none !important;
+        #ad-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 9999;
+            background: #000;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+        #ad-overlay.show {
+            display: flex;
+        }
+        #ad-overlay .ad-content {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        #ad-overlay .ad-content iframe {
+            width: 100%;
+            height: 80%;
+            border: none;
+            border-radius: 12px;
+            background: #1a1a1a;
+        }
+        #ad-overlay .ad-timer {
+            color: #fff;
+            font-size: 48px;
+            font-weight: 700;
+            margin: 20px 0;
+            text-align: center;
+        }
+        #ad-overlay .ad-timer span {
+            color: #fbbf24;
+        }
+        #ad-overlay .ad-label {
+            color: #aaa;
+            font-size: 16px;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        #ad-overlay .ad-skip-btn {
+            background: #22c55e;
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            padding: 12px 30px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: none;
+        }
+        #ad-overlay .ad-skip-btn.show {
+            display: block;
+        }
+        #ad-overlay .ad-skip-btn:active {
+            transform: scale(0.95);
         }
         @media (max-width: 480px) {
             #topic-grid {
-                grid-template-columns: 1fr 1fr;
-                gap: 10px;
+                gap: 14px;
             }
             .topic-title {
-                font-size: 12px !important;
+                font-size: 16px !important;
             }
             header h1 {
                 font-size: 17px;
             }
             .btn-ad {
-                font-size: 12px;
-                padding: 8px;
+                font-size: 14px;
+                padding: 12px;
+            }
+            #ad-overlay .ad-timer {
+                font-size: 36px;
+            }
+            #ad-overlay .ad-content iframe {
+                height: 70%;
             }
         }
     </style>
@@ -191,19 +264,28 @@
     <div id="app">
         <header>
             <h1>📹 ভিডিও টপিক</h1>
-            <div id="user-info">
-                <span id="user-name"></span>
-            </div>
+            <div id="user-info"><span id="user-name"></span></div>
         </header>
         <div id="loading">⏳ লোড হচ্ছে...</div>
         <div id="topic-grid"></div>
     </div>
+
+    <!-- অ্যাড ওভারলে -->
+    <div id="ad-overlay">
+        <div class="ad-content">
+            <div class="ad-label">⏳ অ্যাড দেখুন (১৫ সেকেন্ড)</div>
+            <iframe id="adIframe" src=""></iframe>
+            <div class="ad-timer"><span id="adTimer">15</span> সেকেন্ড</div>
+            <button class="ad-skip-btn" id="adSkipBtn">✅ অ্যাড শেষ! আনলক করুন</button>
+        </div>
+    </div>
+
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
         (function() {
             'use strict';
             
-            console.log('App started - Simulation Mode');
+            console.log('App started - 15 Second Ad System');
             
             var Telegram = null;
             try {
@@ -219,8 +301,16 @@
             var API_BASE = '/api';
             var topics = [];
             var unlockedTopics = {};
-            var isAdWatching = false;
-            var adTimers = {};
+            var isWatching = false;
+            var watchTimers = {};
+            var currentTopic = null;
+            var currentBtn = null;
+            var adCount = 0;
+            var adTotal = 0;
+            var timerInterval = null;
+
+            // আপনার Direct Link এখানে বসান
+            var AD_LINK = 'https://www.example.com/ad-page';
 
             function getUserId() {
                 try {
@@ -245,12 +335,8 @@
             }
 
             function getThumbnailUrl(topic) {
-                if (topic.thumbnail) {
-                    return API_BASE + '/thumbnail/' + topic.thumbnail;
-                }
-                if (topic.thumbnails && topic.thumbnails.length > 0) {
-                    return API_BASE + '/thumbnail/' + topic.thumbnails[0];
-                }
+                if (topic.thumbnail) return API_BASE + '/thumbnail/' + topic.thumbnail;
+                if (topic.thumbnails && topic.thumbnails.length > 0) return API_BASE + '/thumbnail/' + topic.thumbnails[0];
                 return null;
             }
 
@@ -280,26 +366,25 @@
                     
                     var thumbnailHtml = '';
                     if (thumbUrl) {
-                        thumbnailHtml = '<img src="' + thumbUrl + '" alt="' + (topic.title || 'টপিক') + '" onerror="this.style.display=\'none\'">';
+                        thumbnailHtml = '<img src="' + thumbUrl + '" alt="' + (topic.title || 'টপিক') + '" onerror="this.parentElement.innerHTML=\'<span style=\'font-size:60px;color:#555;\'>📹</span>\'">';
                     }
                     
                     var btnHtml = '';
                     if (topicUnlocked) {
                         btnHtml = '<button class="btn-ad unlocked" disabled>✅ আনলক করা আছে</button>';
                     } else {
-                        btnHtml = '<button class="btn-ad watch" data-topic-id="' + topic.id + '" data-ads="' + adsRequired + '">🎬 ' + adsRequired + 'টি অ্যাড দেখে আনলক করুন</button>';
+                        btnHtml = '<button class="btn-ad watch" data-topic-id="' + topic.id + '" data-ads="' + adsRequired + '">🎬 ' + adsRequired + 'টি ১৫ সেকেন্ড অ্যাড দেখে আনলক করুন</button>';
                     }
                     
                     card.innerHTML = `
                         <div class="thumbnail-container">
-                            ${thumbnailHtml}
-                            <span style="font-size:40px; ${thumbUrl ? 'display:none;' : ''}">📹</span>
+                            ${thumbnailHtml || '<span style="font-size:60px;color:#555;">📹</span>'}
                             <div class="lock-icon ${topicUnlocked ? 'unlocked' : ''}">${topicUnlocked ? '🔓' : '🔒'}</div>
                             <div class="video-count-badge">📹 ${videoCount}</div>
                         </div>
                         <div class="topic-info">
                             <div class="topic-title">${topic.title || 'নামবিহীন টপিক'}</div>
-                            <div class="topic-meta">🔢 ${adsRequired}টি অ্যাড দেখে আনলক করুন</div>
+                            <div class="topic-meta">🔢 ${adsRequired}টি ১৫ সেকেন্ড অ্যাড দেখে আনলক করুন</div>
                             ${topicUnlocked ? '<div class="timeout-badge">⏳ ৩০ মিনিট পর আবার লক হবে</div>' : ''}
                         </div>
                         <div class="topic-actions">
@@ -317,7 +402,7 @@
                             var topicId = this.getAttribute('data-topic-id');
                             var topicObj = topics.find(function(t) { return t.id === topicId; });
                             if (topicObj) {
-                                startWatchingAd(topicObj, this);
+                                startAdWatch(topicObj, this);
                             }
                         });
                     }
@@ -336,7 +421,7 @@
                     progressEl.textContent = '🎉 টপিকটি আনলক হয়েছে! (৩০ মিনিটের জন্য)';
                 }
                 
-                isAdWatching = false;
+                isWatching = false;
                 
                 var card = btnElement.closest('.topic-card');
                 var lockIcon = card.querySelector('.lock-icon');
@@ -363,45 +448,103 @@
                             userId: userId,
                             topicId: topic.id
                         })
-                    }).then(function(response) {
-                        return response.json();
-                    }).then(function(data) {
-                        console.log('Unlock response:', data);
                     }).catch(function(err) {
                         console.error('Unlock error:', err);
                     });
                 }
             }
 
-            function startWatchingAd(topic, btnElement) {
-                if (isAdWatching) return;
-                if (adTimers[topic.id]) return;
+            function startAdWatch(topic, btnElement) {
+                if (isWatching) return;
                 
-                var totalAds = topic.adsRequired || 0;
-                var adsWatched = 0;
-                isAdWatching = true;
+                currentTopic = topic;
+                currentBtn = btnElement;
+                adTotal = topic.adsRequired || 0;
+                adCount = 0;
+                isWatching = true;
                 
                 btnElement.disabled = true;
                 btnElement.className = 'btn-ad watching';
-                btnElement.textContent = '⏳ অ্যাড দেখছেন... (সিমুলেশন)';
+                btnElement.textContent = '⏳ অ্যাড দেখছেন... (0/' + adTotal + ')';
                 
                 var progressEl = document.getElementById('progress-' + topic.id);
                 if (progressEl) {
-                    progressEl.textContent = 'প্রগ্রেস: 0/' + totalAds;
+                    progressEl.textContent = 'অগ্রগতি: 0/' + adTotal;
                 }
                 
-                adTimers[topic.id] = setInterval(function() {
-                    adsWatched++;
-                    if (progressEl) {
-                        progressEl.textContent = 'প্রগ্রেস: ' + adsWatched + '/' + totalAds;
-                    }
+                showAd();
+            }
+
+            function showAd() {
+                var overlay = document.getElementById('ad-overlay');
+                var iframe = document.getElementById('adIframe');
+                var skipBtn = document.getElementById('adSkipBtn');
+                var timerDisplay = document.getElementById('adTimer');
+                
+                overlay.classList.add('show');
+                iframe.src = AD_LINK;
+                skipBtn.className = 'ad-skip-btn';
+                skipBtn.disabled = true;
+                
+                var timeLeft = 15;
+                timerDisplay.textContent = timeLeft;
+                
+                if (timerInterval) {
+                    clearInterval(timerInterval);
+                }
+                
+                timerInterval = setInterval(function() {
+                    timeLeft--;
+                    timerDisplay.textContent = timeLeft;
                     
-                    if (adsWatched >= totalAds) {
-                        clearInterval(adTimers[topic.id]);
-                        delete adTimers[topic.id];
-                        unlockTopic(topic, btnElement);
+                    if (timeLeft <= 0) {
+                        clearInterval(timerInterval);
+                        timerInterval = null;
+                        skipBtn.className = 'ad-skip-btn show';
+                        skipBtn.disabled = false;
+                        timerDisplay.textContent = '✅';
+                        
+                        skipBtn.onclick = function() {
+                            onAdComplete();
+                        };
                     }
-                }, 2000);
+                }, 1000);
+            }
+
+            function onAdComplete() {
+                var overlay = document.getElementById('ad-overlay');
+                var iframe = document.getElementById('adIframe');
+                
+                overlay.classList.remove('show');
+                iframe.src = '';
+                
+                if (timerInterval) {
+                    clearInterval(timerInterval);
+                    timerInterval = null;
+                }
+                
+                adCount++;
+                updateAdProgress();
+                
+                if (adCount >= adTotal) {
+                    if (currentTopic && currentBtn) {
+                        unlockTopic(currentTopic, currentBtn);
+                    }
+                } else {
+                    setTimeout(function() {
+                        showAd();
+                    }, 500);
+                }
+            }
+
+            function updateAdProgress() {
+                var progressEl = document.getElementById('progress-' + (currentTopic ? currentTopic.id : ''));
+                if (progressEl) {
+                    progressEl.textContent = 'অগ্রগতি: ' + adCount + '/' + adTotal;
+                }
+                if (currentBtn) {
+                    currentBtn.textContent = '⏳ অ্যাড দেখছেন... (' + adCount + '/' + adTotal + ')';
+                }
             }
 
             function loadUnlockedStatus() {
@@ -455,7 +598,6 @@
                 loadTopics();
             }
 
-            // প্রতি 60 সেকেন্ড পর পর রিফ্রেশ
             setInterval(function() {
                 loadUnlockedStatus();
             }, 60000);

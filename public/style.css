@@ -47,29 +47,82 @@ header h1 {
 
 #topic-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
+    grid-template-columns: 1fr;
+    gap: 16px;
 }
 
 .topic-card {
     background: #1a1a1a;
     border-radius: 12px;
     overflow: hidden;
-    cursor: pointer;
-    transition: transform 0.2s;
     border: 1px solid #272727;
+    display: flex;
+    flex-direction: column;
+    transition: transform 0.2s, box-shadow 0.2s;
 }
 
 .topic-card:active {
-    transform: scale(0.97);
+    transform: scale(0.98);
 }
 
-.topic-card .topic-info {
-    padding: 10px 12px;
+.thumbnail-container {
+    position: relative;
+    background: #2a2a2a;
+    aspect-ratio: 16/9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
 }
 
-.topic-card .topic-title {
-    font-size: 14px;
+.thumbnail-container img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.thumbnail-container .placeholder {
+    font-size: 60px;
+    color: #555;
+}
+
+.lock-icon {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: rgba(0,0,0,0.75);
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    color: white;
+}
+
+.lock-icon.unlocked {
+    background: rgba(34, 197, 94, 0.85);
+}
+
+.video-count-badge {
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    background: rgba(0,0,0,0.75);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 12px;
+    color: #fff;
+}
+
+.topic-info {
+    padding: 14px 16px 10px 16px;
+    flex: 1;
+}
+
+.topic-title {
+    font-size: 18px;
     font-weight: 600;
     color: #fff;
     line-height: 1.3;
@@ -80,67 +133,17 @@ header h1 {
     overflow: hidden;
 }
 
-.topic-card .topic-meta {
-    font-size: 12px;
+.topic-meta {
+    font-size: 14px;
     color: #888;
     margin-top: 4px;
 }
 
-.modal {
-    display: none;
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0,0,0,0.8);
-    justify-content: center;
-    align-items: center;
-    z-index: 1000;
-    padding: 20px;
+.topic-actions {
+    padding: 0 16px 16px 16px;
 }
 
-.modal.show {
-    display: flex;
-}
-
-.modal-content {
-    background: #1a1a1a;
-    border-radius: 16px;
-    padding: 24px;
-    max-width: 400px;
-    width: 100%;
-    border: 1px solid #272727;
-    position: relative;
-}
-
-.close-btn {
-    position: absolute;
-    top: 12px;
-    right: 16px;
-    font-size: 24px;
-    color: #888;
-    cursor: pointer;
-}
-
-.close-btn:hover {
-    color: #fff;
-}
-
-.modal-content h2 {
-    font-size: 20px;
-    margin-bottom: 8px;
-    color: #fff;
-}
-
-.modal-content p {
-    color: #aaa;
-    font-size: 14px;
-    margin-bottom: 16px;
-    line-height: 1.6;
-}
-
-.btn-primary {
+.btn-ad {
     width: 100%;
     padding: 14px;
     border: none;
@@ -152,52 +155,64 @@ header h1 {
     transition: all 0.3s ease;
 }
 
-.btn-primary:active {
+.btn-ad:active {
     transform: scale(0.97);
 }
 
-.btn-primary:disabled {
-    opacity: 0.7;
+.btn-ad:disabled {
+    opacity: 0.6;
     cursor: not-allowed;
     transform: none;
 }
 
-.btn-primary.watch-ad {
+.btn-ad.watch {
     background: #dc2626;
 }
 
-.btn-primary.watch-ad:active {
+.btn-ad.watch:active {
     background: #b91c1c;
 }
 
-.btn-primary.unlocked {
+.btn-ad.unlocked {
     background: #22c55e;
 }
 
-.btn-primary.unlocked:active {
+.btn-ad.unlocked:active {
     background: #16a34a;
 }
 
-.hidden {
-    display: none !important;
+.btn-ad.watching {
+    background: #f59e0b;
+}
+
+.ad-progress {
+    font-size: 13px;
+    color: #fbbf24;
+    text-align: center;
+    margin-top: 8px;
+}
+
+.timeout-badge {
+    font-size: 11px;
+    color: #f87171;
+    margin-top: 4px;
 }
 
 @media (max-width: 480px) {
     #topic-grid {
-        grid-template-columns: 1fr 1fr;
-        gap: 10px;
+        gap: 14px;
     }
-    .topic-card .topic-title {
-        font-size: 12px;
+    .topic-title {
+        font-size: 16px !important;
     }
     header h1 {
         font-size: 17px;
     }
-    .modal-content {
-        padding: 16px;
-    }
-    .btn-primary {
-        padding: 12px;
+    .btn-ad {
         font-size: 14px;
+        padding: 12px;
+    }
+    .thumbnail-container .placeholder {
+        font-size: 40px;
     }
 }
