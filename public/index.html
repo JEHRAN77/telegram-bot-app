@@ -57,6 +57,11 @@
             border: 1px solid #272727;
             display: flex;
             flex-direction: column;
+            transition: all 0.3s ease;
+        }
+        .topic-card.unlocked-card {
+            border-color: #22c55e;
+            box-shadow: 0 0 20px rgba(34, 197, 94, 0.2);
         }
         .topic-card:active {
             transform: scale(0.98);
@@ -88,9 +93,11 @@
             justify-content: center;
             font-size: 16px;
             color: white;
+            transition: all 0.5s ease;
         }
         .lock-icon.unlocked {
-            background: rgba(34, 197, 94, 0.85);
+            background: rgba(34, 197, 94, 0.9);
+            box-shadow: 0 0 20px rgba(34, 197, 94, 0.5);
         }
         .video-count-badge {
             position: absolute;
@@ -133,30 +140,38 @@
             font-weight: 600;
             color: #fff;
             cursor: pointer;
-            transition: all 0.3s ease;
+            transition: all 0.5s ease;
+            position: relative;
+            overflow: hidden;
         }
         .btn-ad:active {
             transform: scale(0.97);
         }
         .btn-ad:disabled {
-            opacity: 0.6;
+            opacity: 0.8;
             cursor: not-allowed;
             transform: none;
         }
         .btn-ad.watch {
             background: #dc2626;
+            box-shadow: 0 4px 15px rgba(220, 38, 38, 0.3);
         }
         .btn-ad.watch:active {
             background: #b91c1c;
         }
         .btn-ad.unlocked {
             background: #22c55e;
+            box-shadow: 0 4px 25px rgba(34, 197, 94, 0.5);
+            animation: pulse-green 2s infinite;
         }
-        .btn-ad.unlocked:active {
-            background: #16a34a;
+        @keyframes pulse-green {
+            0% { box-shadow: 0 4px 25px rgba(34, 197, 94, 0.5); }
+            50% { box-shadow: 0 4px 40px rgba(34, 197, 94, 0.8); }
+            100% { box-shadow: 0 4px 25px rgba(34, 197, 94, 0.5); }
         }
         .btn-ad.watching {
             background: #f59e0b;
+            box-shadow: 0 4px 15px rgba(245, 158, 11, 0.3);
         }
         .ad-progress {
             font-size: 13px;
@@ -168,6 +183,9 @@
             font-size: 11px;
             color: #f87171;
             margin-top: 4px;
+        }
+        .timeout-badge.unlocked-badge {
+            color: #4ade80;
         }
         #ad-overlay {
             display: none;
@@ -227,6 +245,7 @@
             font-weight: 600;
             cursor: pointer;
             display: none;
+            box-shadow: 0 4px 25px rgba(34, 197, 94, 0.4);
         }
         #ad-overlay .ad-skip-btn.show {
             display: block;
@@ -267,9 +286,9 @@
     <!-- অ্যাড ওভারলে -->
     <div id="ad-overlay">
         <div class="ad-content">
-            <div class="ad-label">⏳ অ্যাড দেখুন (১৫ সেকেন্ড)</div>
+            <div class="ad-label">⏳ অ্যাড দেখুন</div>
             <iframe id="adIframe" src=""></iframe>
-            <div class="ad-timer"><span id="adTimer">15</span> সেকেন্ড</div>
+            <div class="ad-timer"><span id="adTimer">0</span> সেকেন্ড</div>
             <button class="ad-skip-btn" id="adSkipBtn">✅ অ্যাড শেষ! আনলক করুন</button>
         </div>
     </div>
@@ -279,7 +298,7 @@
         (function() {
             'use strict';
             
-            console.log('App started - Correct Ad Count');
+            console.log('App started - Single Ad Link + Green Button');
             
             var Telegram = null;
             try {
@@ -302,13 +321,12 @@
             var totalAdsRequired = 0;
             var adCount = 0;
 
-            var AD_LINKS = [
-                'https://www.profitableratecpmnetwork.com/gg75fk7m?key=bff396eaed0905f21875184a5176e894',
-                'https://www.profitableratecpmnetwork.com/rispia5p4?key=7f0f8316968997cb73fa9559c2c685a3'
-            ];
+            // ✅ শুধু ১টি লিংক
+            var AD_LINK = 'https://www.profitableratecpmnetwork.com/rispia5p4?key=7f0f8316968997cb73fa9559c2c685a3';
 
-            function getRandomAdLink() {
-                return AD_LINKS[Math.floor(Math.random() * AD_LINKS.length)];
+            // ১৫-৪৫ সেকেন্ডের মধ্যে র্যান্ডম টাইমার
+            function getRandomTimer() {
+                return Math.floor(Math.random() * (45 - 15 + 1)) + 15;
             }
 
             function getUserId() {
@@ -363,6 +381,10 @@
                     var adsRequired = topic.adsRequired || 0;
                     var topicUnlocked = isTopicUnlocked(topic.id);
                     
+                    if (topicUnlocked) {
+                        card.classList.add('unlocked-card');
+                    }
+                    
                     var thumbnailHtml = '';
                     if (thumbUrl) {
                         thumbnailHtml = '<img src="' + thumbUrl + '" alt="' + (topic.title || 'টপিক') + '" onerror="this.parentElement.innerHTML=\'<span style=\'font-size:60px;color:#555;\'>📹</span>\'">';
@@ -384,7 +406,7 @@
                         <div class="topic-info">
                             <div class="topic-title">${topic.title || 'নামবিহীন টপিক'}</div>
                             <div class="topic-meta">📹 ${videoCount}টি ভিডিও • 🔢 ${adsRequired}টি অ্যাড দেখে আনলক করুন</div>
-                            ${topicUnlocked ? '<div class="timeout-badge">⏳ ৩০ মিনিট পর আবার লক হবে</div>' : ''}
+                            ${topicUnlocked ? '<div class="timeout-badge unlocked-badge">✅ ৩০ মিনিটের জন্য আনলক করা আছে</div>' : '<div class="timeout-badge">⏳ ৩০ মিনিট পর আবার লক হবে</div>'}
                         </div>
                         <div class="topic-actions">
                             ${btnHtml}
@@ -411,9 +433,16 @@
             function unlockTopic(topic, btnElement) {
                 unlockedTopics[topic.id] = true;
                 
+                // বাটন পরিবর্তন - সবুজ
                 btnElement.textContent = '✅ আনলক করা আছে';
                 btnElement.className = 'btn-ad unlocked';
                 btnElement.disabled = true;
+                
+                // কার্ডে আনলক ক্লাস যোগ
+                var card = btnElement.closest('.topic-card');
+                if (card) {
+                    card.classList.add('unlocked-card');
+                }
                 
                 var progressEl = document.getElementById('progress-' + topic.id);
                 if (progressEl) {
@@ -423,20 +452,18 @@
                 isWatching = false;
                 adCount = 0;
                 
-                var card = btnElement.closest('.topic-card');
+                // লক আইকন পরিবর্তন
                 var lockIcon = card.querySelector('.lock-icon');
                 if (lockIcon) {
                     lockIcon.textContent = '🔓';
                     lockIcon.className = 'lock-icon unlocked';
                 }
                 
+                // টাইমআউট ব্যাজ পরিবর্তন
                 var timeoutBadge = card.querySelector('.timeout-badge');
-                if (!timeoutBadge) {
-                    var infoDiv = card.querySelector('.topic-info');
-                    var badge = document.createElement('div');
-                    badge.className = 'timeout-badge';
-                    badge.textContent = '⏳ ৩০ মিনিট পর আবার লক হবে';
-                    infoDiv.appendChild(badge);
+                if (timeoutBadge) {
+                    timeoutBadge.textContent = '✅ ৩০ মিনিটের জন্য আনলক করা আছে';
+                    timeoutBadge.className = 'timeout-badge unlocked-badge';
                 }
                 
                 var userId = getUserId();
@@ -482,15 +509,17 @@
                 var skipBtn = document.getElementById('adSkipBtn');
                 var timerDisplay = document.getElementById('adTimer');
                 
-                var adLink = getRandomAdLink();
-                console.log('Showing ad link:', adLink);
+                var totalTime = getRandomTimer();
+                var timeLeft = totalTime;
+                
+                console.log('Ad link:', AD_LINK);
+                console.log('Timer:', totalTime, 'seconds');
                 
                 overlay.classList.add('show');
-                iframe.src = adLink;
+                iframe.src = AD_LINK;
                 skipBtn.className = 'ad-skip-btn';
                 skipBtn.disabled = true;
                 
-                var timeLeft = 15;
                 timerDisplay.textContent = timeLeft;
                 
                 if (timerInterval) {
