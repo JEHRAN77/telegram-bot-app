@@ -399,10 +399,8 @@ async function saveVideo(ctx, data) {
 bot.on('text', async (ctx) => {
   const text = ctx.message.text;
   
-  // শুধু অ্যাডমিন চেক করুন
   if (ctx.from.id !== ADMIN_ID) return;
   
-  // ===== /list =====
   if (text === '/list' || text === '/list@' + bot.botInfo.username) {
     await ctx.reply('⏳ তালিকা তৈরি হচ্ছে...');
     try {
@@ -428,7 +426,6 @@ bot.on('text', async (ctx) => {
     return;
   }
   
-  // ===== /admin =====
   if (text === '/admin' || text === '/admin@' + bot.botInfo.username) {
     await ctx.reply('⏳ অ্যাডমিন প্যানেল লোড হচ্ছে...');
     try {
@@ -446,7 +443,6 @@ bot.on('text', async (ctx) => {
     return;
   }
   
-  // ===== /stats =====
   if (text === '/stats' || text === '/stats@' + bot.botInfo.username) {
     await ctx.reply('⏳ পরিসংখ্যান লোড হচ্ছে...');
     try {
@@ -470,7 +466,6 @@ bot.on('text', async (ctx) => {
     return;
   }
   
-  // ===== /delete =====
   if (text === '/delete' || text === '/delete@' + bot.botInfo.username) {
     await ctx.reply('⏳ ডিলিট তালিকা তৈরি হচ্ছে...');
     try {
@@ -490,7 +485,6 @@ bot.on('text', async (ctx) => {
     return;
   }
   
-  // ===== /broadcast =====
   if (text === '/broadcast' || text === '/broadcast@' + bot.botInfo.username) {
     await ctx.reply('⏳ ব্রডকাস্ট প্রস্তুত হচ্ছে...');
     try {
@@ -526,6 +520,52 @@ bot.action(/delete_(.+)/, async (ctx) => {
     await ctx.editMessageText('✅ টপিকটি ডিলিট করা হয়েছে।');
   } catch (error) {
     await ctx.reply('❌ ডিলিট করতে সমস্যা হয়েছে: ' + error.message);
+  }
+});
+
+// =============================================
+// 🩺 ডায়াগনস্টিক টুল
+// =============================================
+
+bot.command('checkdb', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) {
+    return ctx.reply('⛔ শুধুমাত্র অ্যাডমিনের জন্য।');
+  }
+  
+  await ctx.reply('🔍 ডেটাবেস চেক করা হচ্ছে...');
+  
+  let result = '📊 ডেটাবেস রিপোর্ট:\n\n';
+  
+  try {
+    const topicsSnapshot = await db.collection('topics').get();
+    result += `📁 টপিক কালেকশন: ${topicsSnapshot.size}টি ডকুমেন্ট\n`;
+    
+    if (topicsSnapshot.size > 0) {
+      topicsSnapshot.docs.forEach((doc, i) => {
+        const data = doc.data();
+        result += `   ${i+1}. ${doc.id}\n`;
+        result += `      📌 টাইটেল: ${data.title || 'N/A'}\n`;
+        result += `      📹 ভিডিও: ${data.videoCount || 0}টি\n`;
+        result += `      🔢 অ্যাড: ${data.adsRequired || 0}টি\n`;
+      });
+    }
+    
+    const usersSnapshot = await db.collection('users').get();
+    result += `\n👥 ইউজার কালেকশন: ${usersSnapshot.size}টি ডকুমেন্ট\n`;
+    
+    if (usersSnapshot.size > 0) {
+      usersSnapshot.docs.forEach((doc, i) => {
+        const data = doc.data();
+        result += `   ${i+1}. ${doc.id}\n`;
+        result += `      👤 নাম: ${data.firstName || 'N/A'}\n`;
+        result += `      ✅ যাচাইকৃত: ${data.verified ? 'হ্যাঁ' : 'না'}\n`;
+      });
+    }
+    
+    await ctx.reply(result);
+    
+  } catch (error) {
+    await ctx.reply('❌ ডেটাবেস চেক করতে সমস্যা: ' + error.message);
   }
 });
 
