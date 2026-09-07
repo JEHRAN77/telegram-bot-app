@@ -70,7 +70,7 @@
     <script>
         (function() {
             'use strict';
-            console.log('App started - OMG Rewarded Popup');
+            console.log('App started - Rewarded Interstitial');
             
             var Telegram = null;
             try {
@@ -238,10 +238,10 @@
                     progressEl.textContent = 'প্রগ্রেস: 0/' + totalAdsRequired;
                     progressEl.className = 'ad-progress';
                 }
-                showOMGAd();
+                showAd();
             }
 
-            function showOMGAd() {
+            function showAd() {
                 var overlay = document.getElementById('ad-overlay');
                 var skipBtn = document.getElementById('adSkipBtn');
                 var timerDisplay = document.getElementById('adTimer');
@@ -251,9 +251,9 @@
                 skipBtn.disabled = true;
                 timerDisplay.textContent = '15';
 
+                // Rewarded Interstitial - OMG
                 try {
-                    // OMG Rewarded Popup
-                    show_11737734('pop').then(function() {
+                    show_11737734().then(function() {
                         // অ্যাড সম্পূর্ণ হয়েছে - রিওয়ার্ড দিন
                         console.log('Ad completed - Reward user');
                         completeAd();
@@ -263,7 +263,7 @@
                         overlay.classList.remove('show');
                     });
                 } catch(error) {
-                    console.error('OMG ad error:', error);
+                    console.error('Ad init error:', error);
                     resetAdButton();
                     overlay.classList.remove('show');
                 }
@@ -319,7 +319,7 @@
                     adCount = 0;
                     if (currentTopic && currentBtn) unlockTopic(currentTopic, currentBtn);
                 } else {
-                    setTimeout(function() { showOMGAd(); }, 500);
+                    setTimeout(function() { showAd(); }, 500);
                 }
             }
 
