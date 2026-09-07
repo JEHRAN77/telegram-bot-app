@@ -55,11 +55,6 @@
             color: #fff;
             overflow: hidden;
         }
-        header .profile .avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
         header .profile .username {
             font-size: 14px;
             color: #aaa;
@@ -119,7 +114,6 @@
             border-radius: 12px;
             overflow: hidden;
             transition: transform 0.2s ease;
-            cursor: pointer;
         }
         .topic-card:active {
             transform: scale(0.98);
@@ -189,34 +183,34 @@
             background: #888;
         }
 
-        /* Unlock Progress */
-        .unlock-progress {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 14px 14px 14px;
-            border-top: 1px solid #272727;
+        /* ===== Unlock Button ===== */
+        .topic-actions {
+            padding: 0 14px 14px 14px;
         }
-        .unlock-progress .progress-bar {
-            flex: 1;
-            height: 4px;
-            border-radius: 2px;
-            background: #2a2a2a;
-            overflow: hidden;
+        .btn-unlock {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            color: #fff;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: #dc2626;
         }
-        .unlock-progress .progress-bar .fill {
-            height: 100%;
-            border-radius: 2px;
-            background: #ff0000;
-            transition: width 0.5s ease;
+        .btn-unlock:active {
+            transform: scale(0.97);
         }
-        .unlock-progress .progress-bar .fill.done {
+        .btn-unlock:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .btn-unlock.unlocked {
             background: #22c55e;
         }
-        .unlock-progress .label {
-            font-size: 12px;
-            color: #aaa;
-            white-space: nowrap;
+        .btn-unlock.watching {
+            background: #f59e0b;
         }
 
         /* ===== Ad Overlay ===== */
@@ -295,8 +289,9 @@
             .video-info .title {
                 font-size: 14px;
             }
-            .unlock-progress .label {
-                font-size: 11px;
+            .btn-unlock {
+                font-size: 14px;
+                padding: 10px;
             }
             #ad-overlay .ad-timer {
                 font-size: 36px;
@@ -353,7 +348,7 @@
         (function() {
             'use strict';
 
-            console.log('App started - YouTube Style');
+            console.log('App started - With Button');
 
             var Telegram = null;
             try {
@@ -414,7 +409,7 @@
             var AD_LINK = 'https://www.profitableratecpmnetwork.com/rispia5p4?key=7f0f8316968997cb73fa9559c2c685a3';
 
             // =============================================
-            // RENDER TOPICS (YouTube Style)
+            // RENDER TOPICS
             // =============================================
             function renderTopics() {
                 var grid = document.getElementById('topic-grid');
@@ -448,10 +443,14 @@
                     var lockIcon = topicUnlocked ? '🔓' : '🔒';
                     var lockClass = topicUnlocked ? 'lock-icon unlocked' : 'lock-icon';
 
-                    var progressPercent = topicUnlocked ? 100 : 0;
-                    var progressText = topicUnlocked ?
-                        '✅ আনলক করা আছে' :
-                        '🔒 আনলক করতে ' + adsRequired + 'টি অ্যাড দেখুন';
+                    // ===== Button =====
+                    var btnHtml = '';
+                    if (topicUnlocked) {
+                        btnHtml = '<button class="btn-unlock unlocked" disabled>✅ আনলক করা আছে</button>';
+                    } else {
+                        btnHtml = '<button class="btn-unlock" data-topic-id="' + topic.id + '" data-ads="' +
+                            adsRequired + '">🎬 ' + adsRequired + 'টি অ্যাড দেখে আনলক করুন</button>';
+                    }
 
                     card.innerHTML = `
                         <div class="thumbnail-container">
@@ -467,36 +466,47 @@
                                 <span>${topicUnlocked ? '✅ আনলকড' : '🔒 লকড'}</span>
                             </div>
                         </div>
-                        <div class="unlock-progress">
-                            <div class="progress-bar">
-                                <div class="fill ${topicUnlocked ? 'done' : ''}" style="width:${progressPercent}%;"></div>
-                            </div>
-                            <span class="label">${progressText}</span>
+                        <div class="topic-actions">
+                            ${btnHtml}
                         </div>
                     `;
 
-                    // ক্লিক করলে অ্যাড দেখাবে (যদি লকড থাকে)
-                    if (!topicUnlocked) {
-                        card.addEventListener('click', function(e) {
+                    grid.appendChild(card);
+
+                    // ===== Button Event =====
+                    var btn = card.querySelector('.btn-unlock');
+                    if (btn && !topicUnlocked) {
+                        btn.addEventListener('click', function(e) {
                             e.stopPropagation();
-                            startAdWatch(topic, card);
+                            var topicId = this.getAttribute('data-topic-id');
+                            var topicObj = topics.find(function(t) {
+                                return t.id === topicId;
+                            });
+                            if (topicObj) {
+                                currentBtn = this;
+                                startAdWatch(topicObj);
+                            }
                         });
                     }
-
-                    grid.appendChild(card);
                 });
             }
 
             // =============================================
             // AD WATCH SYSTEM
             // =============================================
-            function startAdWatch(topic, card) {
+            function startAdWatch(topic) {
                 if (isWatching) return;
 
                 totalAdsRequired = topic.adsRequired || 1;
                 adCount = 0;
                 currentTopic = topic;
                 isWatching = true;
+
+                if (currentBtn) {
+                    currentBtn.textContent = '⏳ অ্যাড দেখছেন... (0/' + totalAdsRequired + ')';
+                    currentBtn.className = 'btn-unlock watching';
+                    currentBtn.disabled = true;
+                }
 
                 showAd();
             }
@@ -547,6 +557,10 @@
 
                 adCount++;
 
+                if (currentBtn) {
+                    currentBtn.textContent = '⏳ অ্যাড দেখছেন... (' + adCount + '/' + totalAdsRequired + ')';
+                }
+
                 if (adCount >= totalAdsRequired) {
                     adCount = 0;
                     unlockTopic(currentTopic);
@@ -560,6 +574,12 @@
             function unlockTopic(topic) {
                 unlockedTopics[topic.id] = true;
                 isWatching = false;
+
+                if (currentBtn) {
+                    currentBtn.textContent = '✅ আনলক করা আছে';
+                    currentBtn.className = 'btn-unlock unlocked';
+                    currentBtn.disabled = true;
+                }
 
                 var userId = getUserId();
                 if (userId) {
@@ -575,7 +595,8 @@
                     });
                 }
 
-                renderTopics();
+                // রি-রেন্ডার করবেন না, শুধু বাটন আপডেট করুন
+                // renderTopics();
             }
 
             // =============================================
@@ -640,8 +661,6 @@
             });
 
             function filterTopics(category) {
-                // ডেমো ফিল্টার - আসলে সব দেখায়
-                // আপনি চাইলে এখানে ফিল্টার লজিক যোগ করতে পারেন
                 renderTopics();
             }
 
