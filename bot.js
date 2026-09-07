@@ -13,7 +13,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
+// Firebase JSON ফাইল ব্যবহার করুন (আপনার ফাইলের নাম দিন)
+const serviceAccount = require('./telegram-bot-project-ddb4e-firebase-adminsdk-fbsvc-ac1eb43e9c.json');
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
@@ -280,9 +281,9 @@ bot.on('text', async (ctx) => {
   const userId = ctx.from.id;
   const text = ctx.message.text;
   
-  // ✅ কমান্ড চেক করুন - কমান্ড হলে এখানে থামুন
+  // কমান্ড হলে থামুন
   if (text.startsWith('/')) {
-    return; // কমান্ডগুলো অন্য হ্যান্ডলারে যাবে
+    return;
   }
   
   if (addTopicData[userId]) {
