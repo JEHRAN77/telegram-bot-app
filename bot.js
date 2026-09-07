@@ -392,18 +392,26 @@ async function saveVideo(ctx, data) {
   }
 }
 
-// ============ অ্যাডমিন কমান্ড ============
+// ============ অ্যাডমিন কমান্ড (Debug Version) ============
 
 bot.command('list', async (ctx) => {
+  console.log('📋 /list command triggered by:', ctx.from.id);
+  
   if (ctx.from.id !== ADMIN_ID) {
     return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
   }
+  
   try {
     const snapshot = await db.collection('topics').get();
+    console.log('📋 Topics found:', snapshot.size);
+    
     if (snapshot.empty) {
       return ctx.reply('📭 এখনো কোনো টপিক বা ভিডিও যোগ করা হয়নি।');
     }
+    
     let message = '📋 সব টপিক ও ভিডিওর তালিকা:\n\n';
+    let totalVideos = 0;
+    
     snapshot.docs.forEach((doc, index) => {
       const data = doc.data();
       const videoCount = data.videoCount || (data.videos ? data.videos.length : 0);
@@ -413,20 +421,85 @@ bot.command('list', async (ctx) => {
       message += `   🆔 ${doc.id}\n`;
       message += `   📹 ${videoCount}টি ভিডিও\n`;
       message += `   🔢 ${data.adsRequired || 0}টি অ্যাড প্রয়োজন\n\n`;
+      totalVideos += videoCount;
+    });
+    
+    message += `📊 মোট: ${snapshot.size}টি টপিক, ${totalVideos}টি ভিডিও`;
+    await ctx.reply(message);
+  } catch (error) {
+    console.error('❌ Error listing topics:', error);
+    await ctx.reply('❌ তালিকা দেখাতে সমস্যা হয়েছে: ' + error.message);
+  }
+});
+
+bot.command('admin', async (ctx) => {
+  console.log('📊 /admin command triggered by:', ctx.from.id);
+  
+  if (ctx.from.id !== ADMIN_ID) {
+    return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+  }
+  
+  try {
+    const snapshot = await db.collection('users').get();
+    console.log('📊 Users found:', snapshot.size);
+    
+    const users = snapshot.docs.map(doc => doc.data());
+    const verifiedUsers = users.filter(u => u.verified === true);
+    
+    await ctx.reply(
+      `📊 অ্যাডমিন প্যানেল\n\n` +
+      `✅ যাচাইকৃত ইউজার: ${verifiedUsers.length}\n` +
+      `👥 মোট ইউজার: ${users.length}`
+    );
+  } catch (error) {
+    console.error('❌ Error in admin:', error);
+    await ctx.reply('❌ অ্যাডমিন প্যানেল লোড করতে সমস্যা হয়েছে: ' + error.message);
+  }
+});
+
+bot.command('stats', async (ctx) => {
+  console.log('📊 /stats command triggered by:', ctx.from.id);
+  
+  if (ctx.from.id !== ADMIN_ID) {
+    return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+  }
+  
+  try {
+    const snapshot = await db.collection('users')
+      .where('verified', '==', true)
+      .orderBy('verifiedAt', 'desc')
+      .limit(10)
+      .get();
+    
+    console.log('📊 Verified users found:', snapshot.size);
+    
+    if (snapshot.empty) {
+      return ctx.reply('📊 এখনো কোনো যাচাইকৃত ইউজার নেই।');
+    }
+    
+    let message = '📊 সর্বশেষ যাচাইকৃত ইউজার:\n\n';
+    const users = snapshot.docs.map(doc => doc.data());
+    users.forEach((user, index) => {
+      message += `${index + 1}. ${user.firstName} ${user.lastName || ''} (@${user.username || 'N/A'})\n`;
     });
     await ctx.reply(message);
   } catch (error) {
-    console.error('Error listing:', error);
-    await ctx.reply('❌ তালিকা দেখাতে সমস্যা হয়েছে।');
+    console.error('❌ Error in stats:', error);
+    await ctx.reply('❌ পরিসংখ্যান লোড করতে সমস্যা হয়েছে: ' + error.message);
   }
 });
 
 bot.command('delete', async (ctx) => {
+  console.log('🗑️ /delete command triggered by:', ctx.from.id);
+  
   if (ctx.from.id !== ADMIN_ID) {
     return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
   }
+  
   try {
     const snapshot = await db.collection('topics').get();
+    console.log('🗑️ Topics found for delete:', snapshot.size);
+    
     if (snapshot.empty) {
       return ctx.reply('📭 এখনো কোনো টপিক বা ভিডিও যোগ করা হয়নি।');
     }
@@ -442,16 +515,19 @@ bot.command('delete', async (ctx) => {
     
     await ctx.reply(message, Markup.inlineKeyboard(buttons));
   } catch (error) {
-    console.error('Error in delete:', error);
-    await ctx.reply('❌ ডিলিট লিস্ট দেখাতে সমস্যা হয়েছে।');
+    console.error('❌ Error in delete:', error);
+    await ctx.reply('❌ ডিলিট লিস্ট দেখাতে সমস্যা হয়েছে: ' + error.message);
   }
 });
 
 bot.action(/delete_(.+)/, async (ctx) => {
+  console.log('🗑️ Delete action triggered for:', ctx.match[1]);
+  
   if (ctx.from.id !== ADMIN_ID) {
     await ctx.answerCbQuery('⛔ শুধুমাত্র অ্যাডমিনের জন্য।');
     return;
   }
+  
   const topicId = ctx.match[1];
   try {
     await db.collection('topics').doc(topicId).delete();
@@ -459,21 +535,28 @@ bot.action(/delete_(.+)/, async (ctx) => {
     await ctx.reply(`✅ টপিকটি ডিলিট করা হয়েছে।`);
     await ctx.deleteMessage();
   } catch (error) {
+    console.error('❌ Error deleting topic:', error);
     await ctx.answerCbQuery('❌ ডিলিট করতে সমস্যা হয়েছে।');
-    await ctx.reply('❌ ডিলিট করতে সমস্যা হয়েছে।');
+    await ctx.reply('❌ ডিলিট করতে সমস্যা হয়েছে: ' + error.message);
   }
 });
 
 bot.command('broadcast', async (ctx) => {
+  console.log('📢 /broadcast command triggered by:', ctx.from.id);
+  
   if (ctx.from.id !== ADMIN_ID) {
     return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
   }
+  
   try {
     const snapshot = await db.collection('users').where('verified', '==', true).get();
     const users = snapshot.docs.map(doc => doc.data());
+    console.log('📢 Broadcast to:', users.length, 'users');
+    
     if (users.length === 0) {
       return ctx.reply('📭 কোনো যাচাইকৃত ইউজার নেই।');
     }
+    
     await ctx.reply(`📨 ব্রডকাস্ট শুরু হচ্ছে... ${users.length} জন ইউজারকে পাঠানো হবে।`);
     let success = 0, failed = 0;
     for (let i = 0; i < users.length; i++) {
@@ -482,55 +565,14 @@ bot.command('broadcast', async (ctx) => {
         success++;
       } catch (error) {
         failed++;
+        console.error('❌ Failed to send to:', users[i].userId);
       }
       if ((i + 1) % 30 === 0) await new Promise(resolve => setTimeout(resolve, 1000));
     }
     await ctx.reply(`✅ ব্রডকাস্ট শেষ!\n✅ সফল: ${success}\n❌ ব্যর্থ: ${failed}`);
   } catch (error) {
-    console.error('Error in broadcast:', error);
-    await ctx.reply('❌ ব্রডকাস্ট করতে সমস্যা হয়েছে।');
-  }
-});
-
-bot.command('admin', async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) {
-    return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
-  }
-  try {
-    const snapshot = await db.collection('users').get();
-    const users = snapshot.docs.map(doc => doc.data());
-    const verifiedUsers = users.filter(u => u.verified);
-    await ctx.reply(
-      `📊 অ্যাডমিন প্যানেল\n\n✅ যাচাইকৃত ইউজার: ${verifiedUsers.length}\n👥 মোট ইউজার: ${users.length}`
-    );
-  } catch (error) {
-    console.error('Error in admin command:', error);
-    await ctx.reply('❌ অ্যাডমিন প্যানেল লোড করতে সমস্যা হয়েছে।');
-  }
-});
-
-bot.command('stats', async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) {
-    return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
-  }
-  try {
-    const snapshot = await db.collection('users')
-      .where('verified', '==', true)
-      .orderBy('verifiedAt', 'desc')
-      .limit(10)
-      .get();
-    if (snapshot.empty) {
-      return ctx.reply('📊 এখনো কোনো যাচাইকৃত ইউজার নেই।');
-    }
-    let message = '📊 সর্বশেষ যাচাইকৃত ইউজার:\n\n';
-    const users = snapshot.docs.map(doc => doc.data());
-    users.forEach((user, index) => {
-      message += `${index + 1}. ${user.firstName} ${user.lastName || ''} (@${user.username || 'N/A'})\n`;
-    });
-    await ctx.reply(message);
-  } catch (error) {
-    console.error('Error in stats command:', error);
-    await ctx.reply('❌ পরিসংখ্যান লোড করতে সমস্যা হয়েছে।');
+    console.error('❌ Error in broadcast:', error);
+    await ctx.reply('❌ ব্রডকাস্ট করতে সমস্যা হয়েছে: ' + error.message);
   }
 });
 
@@ -674,8 +716,6 @@ app.post('/api/unlock-topic', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
-// ============ CRON JOB ============
 
 cron.schedule('* * * * *', async () => {
   try {
