@@ -604,7 +604,7 @@ app.post('/api/unlock-topic', async (req, res) => {
   }
 });
 
-// ============ CRON JOB ============
+// ============ CRON JOB - প্রতি মিনিটে চেক করে ============
 
 cron.schedule('* * * * *', async () => {
   try {
@@ -613,32 +613,36 @@ cron.schedule('* * * * *', async () => {
     const now = Date.now();
     const THIRTY_MINUTES = 30 * 60 * 1000;
     let deletedCount = 0;
+    let updatedUsers = 0;
     
     for (const doc of snapshot.docs) {
       const data = doc.data();
+      let needsUpdate = false;
       
-      // Delete expired videos
+      // ১. এক্সপায়ার্ড ভিডিও ডিলিট করুন
       const sentMessages = data.sentMessages || [];
       const remainingMessages = [];
       for (const msg of sentMessages) {
-        if (now - msg.sentAt < THIRTY_MINUTES) {
+        const age = now - msg.sentAt;
+        if (age < THIRTY_MINUTES) {
           remainingMessages.push(msg);
         } else {
           try {
             await bot.telegram.deleteMessage(msg.chatId, msg.messageId);
             deletedCount++;
-            console.log(`🗑️ Deleted video message ${msg.messageId} for user ${msg.chatId}`);
+            console.log(`🗑️ Deleted video ${msg.messageId} for user ${msg.chatId} (age: ${Math.round(age/60000)}min)`);
           } catch (error) {
-            console.error(`❌ Error deleting message ${msg.messageId}:`, error.message);
+            console.error(`❌ Could not delete message ${msg.messageId}:`, error.message);
           }
         }
       }
       
       if (remainingMessages.length !== sentMessages.length) {
         await doc.ref.set({ sentMessages: remainingMessages }, { merge: true });
+        needsUpdate = true;
       }
       
-      // Auto-lock topics after 30 minutes
+      // ২. এক্সপায়ার্ড টপিক লক করুন
       const unlockedTopics = data.unlockedTopics || [];
       const topicUnlockTime = data.topicUnlockTime || {};
       
@@ -651,14 +655,17 @@ cron.schedule('* * * * *', async () => {
         await doc.ref.set({
           unlockedTopics: stillUnlocked
         }, { merge: true });
+        needsUpdate = true;
       }
+      
+      if (needsUpdate) updatedUsers++;
     }
     
-    if (deletedCount > 0) {
-      console.log(`✅ Deleted ${deletedCount} expired videos`);
+    if (deletedCount > 0 || updatedUsers > 0) {
+      console.log(`✅ Cleanup: ${deletedCount} videos deleted, ${updatedUsers} users updated`);
     }
   } catch (error) {
-    console.error('Cron error:', error);
+    console.error('❌ Cron error:', error);
   }
 });
 
