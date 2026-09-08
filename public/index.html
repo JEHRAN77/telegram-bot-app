@@ -236,33 +236,12 @@
             // ===== Rewarded Ads =====
             // প্রতিটি ad-এর completion শুধু SDK Promise resolve হলে গণনা হবে।
             // কোনো fake timer/timeout দিয়ে ad complete ধরা হবে না।
-            async function startAdWatch(topic) {
+            function startAdWatch(topic) {
                 if (isWatching) return;
 
                 totalAdsRequired = Math.max(1, parseInt(topic.adsRequired, 10) || 1);
+                if (adCount >= totalAdsRequired) adCount = 0;
                 currentTopic = topic;
-
-                // Always sync the counter from the server before starting.
-                try {
-                    const progressResponse = await fetch(
-                        API_BASE + '/ad-progress/' + encodeURIComponent(getUserId()) + '/' + encodeURIComponent(topic.id)
-                    );
-                    if (progressResponse.ok) {
-                        const progressData = await progressResponse.json();
-                        adCount = Math.min(parseInt(progressData.completed || 0, 10), totalAdsRequired);
-                    } else {
-                        adCount = 0;
-                    }
-                } catch (e) {
-                    console.error('Progress load error:', e);
-                    adCount = 0;
-                }
-
-                if (adCount >= totalAdsRequired) {
-                    await unlockTopic(topic);
-                    return;
-                }
-
                 isWatching = true;
                 adCompleted = false;
 
@@ -284,6 +263,7 @@
                 timerDisplay.textContent = '• • •';
                 label.textContent = '⏳ অ্যাড সম্পূর্ণ হওয়া পর্যন্ত অপেক্ষা করুন';
 
+                // পুরোনো fallback timer বন্ধ রাখা হয়েছে।
                 if (timerInterval) {
                     clearInterval(timerInterval);
                     timerInterval = null;
@@ -297,18 +277,30 @@
                 }
 
                 try {
-                    await Promise.resolve(adFn());
-                    adCompleted = true;
-                    await onAdComplete();
+                    Promise.resolve(adFn()).then(function(result) {
+                        // Rewarded ad: count only when SDK reports completion.
+                        // Some wrappers resolve without a result, so that is also accepted.
+                        if (result && result.done === false) {
+                            resetAd('⚠️ অ্যাড সম্পূর্ণ হয়নি।');
+                            return;
+                        }
+                        adCompleted = true;
+                        onAdComplete();
+                    }).catch(function(error) {
+                        console.error('❌ Ad error:', error);
+                        resetAd('⚠️ অ্যাড চালু হয়নি। আবার চেষ্টা করুন।');
+                    });
                 } catch (error) {
-                    console.error('❌ Ad error:', error);
+                    console.error('❌ Ad init error:', error);
                     resetAd('⚠️ অ্যাড চালু হয়নি। আবার চেষ্টা করুন।');
                 }
             }
 
             async function onAdComplete() {
-                if (!adCompleted || !isWatching) return;
+                if (!adCompleted || !isWatching || !currentTopic) return;
 
+                adCompleted = false;
+                var topic = currentTopic;
                 var overlay = document.getElementById('ad-overlay');
                 overlay.classList.remove('show');
                 if (timerInterval) {
@@ -316,50 +308,8 @@
                     timerInterval = null;
                 }
 
-                adCompleted = false;
-
                 try {
-                    const response = await fetch(API_BASE + '/ad-complete', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            userId: getUserId(),
-                            topicId: currentTopic.id
-                        })
-                    });
-
-                    const result = await response.json();
-                    if (!response.ok || !result.success) {
-                        throw new Error(result.error || 'Could not save ad completion');
-                    }
-
-                    adCount = result.completed;
-                    totalAdsRequired = result.required;
-
-                    if (currentBtn) {
-                        currentBtn.innerHTML = '⏳ অ্যাড দেখা হয়েছে <span class="progress">(' + adCount + '/' + totalAdsRequired + ')</span>';
-                    }
-
-                    if (result.readyToUnlock) {
-                        var finishedTopic = currentTopic;
-                        isWatching = false;
-                        await unlockTopic(finishedTopic);
-                        return;
-                    }
-
-                    isWatching = false;
-                    setTimeout(function() {
-                        if (currentTopic) startAdWatch(currentTopic);
-                    }, 400);
-                } catch (error) {
-                    console.error('❌ Could not record ad completion:', error);
-                    resetAd('⚠️ অ্যাড completion save হয়নি। আবার চেষ্টা করুন।');
-                }
-            }
-
-            async function unlockTopic(topic) {
-                try {
-                    const response = await fetch(API_BASE + '/unlock-topic', {
+                    var response = await fetch(API_BASE + '/ad-complete', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -367,35 +317,34 @@
                             topicId: topic.id
                         })
                     });
+                    var result = await response.json();
+                    if (!response.ok || !result.success) throw new Error(result.error || 'Ad completion failed');
 
-                    const result = await response.json();
-                    if (!response.ok || !result.success) {
-                        throw new Error(result.error || 'Unlock failed');
-                    }
-
-                    unlockedTopics[topic.id] = true;
-                    isWatching = false;
-                    adCount = 0;
+                    adCount = Number(result.count) || 0;
+                    totalAdsRequired = Number(result.required) || totalAdsRequired;
 
                     if (currentBtn) {
-                        currentBtn.innerHTML = '✅ আনলক করা হয়েছে';
-                        currentBtn.className = 'btn-unlock unlocked';
-                        currentBtn.disabled = true;
+                        currentBtn.innerHTML = result.unlocked
+                            ? '🔓 ভিডিও আনলক হচ্ছে...'
+                            : '⏳ অ্যাড দেখা হয়েছে <span class="progress">(' + adCount + '/' + totalAdsRequired + ')</span>';
                     }
 
-                    alert('🎉 ভিডিও আনলক হয়েছে!');
-                    loadUnlockedStatus();
+                    if (result.unlocked) {
+                        isWatching = false;
+                        adCount = 0;
+                        await loadUnlockedStatus();
+                        return;
+                    }
+
+                    isWatching = false;
+                    setTimeout(function() {
+                        if (currentTopic && !unlockedTopics[currentTopic.id]) startAdWatch(currentTopic);
+                    }, 500);
                 } catch (error) {
-                    console.error('❌ Unlock error:', error);
-                    if (currentBtn) {
-                        currentBtn.innerHTML = '❌ আনলক হয়নি — আবার চেষ্টা করুন';
-                        currentBtn.className = 'btn-unlock';
-                        currentBtn.disabled = false;
-                    }
-                    isWatching = false;
+                    console.error('❌ Could not record ad completion:', error);
+                    resetAd('সার্ভারে Ads count সেভ হয়নি। আবার চেষ্টা করুন।');
                 }
             }
-
 
             function resetAd(message) {
                 var overlay = document.getElementById('ad-overlay');

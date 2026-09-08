@@ -32,6 +32,7 @@ const MINI_APP_URL = 'https://telegram-bot-app-24ti.onrender.com';
 let addTopicData = {};
 let addVideoData = {};
 let broadcastData = {};
+let updateAdsData = {};
 
 async function getOrCreateUser(userId, username, firstName, lastName) {
   try {
@@ -298,6 +299,24 @@ bot.command('done', async (ctx) => {
 // ✅ অ্যাডমিন কমান্ড
 // =============================================
 
+bot.command('ads', async (ctx) => {
+  try {
+    if (ctx.from.id !== ADMIN_ID) {
+      return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+    }
+
+    updateAdsData[ctx.from.id] = { step: 'topicId' };
+    await ctx.reply(
+      '🎬 কোন ভিডিও/টপিকের Ads count পরিবর্তন করতে চান?\n\n' +
+      '👉 এখন শুধু Video/Topic ID পাঠান।\n\n' +
+      'উদাহরণ: abc123'
+    );
+  } catch (error) {
+    console.error('❌ Error starting /ads:', error);
+    await ctx.reply('❌ /ads শুরু করতে সমস্যা হয়েছে: ' + error.message);
+  }
+});
+
 bot.command('list', async (ctx) => {
   try {
     console.log('📋 /list command by:', ctx.from.id);
@@ -540,8 +559,76 @@ bot.command('testdb', async (ctx) => {
 
 bot.on('text', async (ctx) => {
   const userId = ctx.from.id;
-  const text = ctx.message.text;
-  
+  const text = ctx.message.text.trim();
+
+  // /ads interactive flow: /ads -> Topic ID -> new Ads count
+  if (updateAdsData[userId]) {
+    const state = updateAdsData[userId];
+
+    if (state.step === 'topicId') {
+      const topicId = text;
+      if (!topicId || topicId.startsWith('/')) {
+        return ctx.reply('❌ সঠিক Video/Topic ID পাঠান।');
+      }
+
+      try {
+        const topicRef = db.collection('topics').doc(topicId);
+        const topicDoc = await topicRef.get();
+        if (!topicDoc.exists) {
+          return ctx.reply(`❌ এই Video/Topic ID পাওয়া যায়নি:\n${topicId}\n\nআবার সঠিক ID পাঠান।`);
+        }
+
+        const currentAds = Math.max(1, Number(topicDoc.data().adsRequired) || 1);
+        state.topicId = topicId;
+        state.currentAds = currentAds;
+        state.step = 'count';
+
+        return ctx.reply(
+          `📌 এই ভিডিও/টপিকের বর্তমান Ads count: ${currentAds}টি\n\n` +
+          '👉 এখন বলুন, কয়টি Ads রাখতে চান?\n' +
+          'শুধু সংখ্যা পাঠান।\n\n' +
+          'উদাহরণ: 6'
+        );
+      } catch (error) {
+        console.error('❌ Error finding topic for /ads:', error);
+        return ctx.reply('❌ Video/Topic খুঁজতে সমস্যা হয়েছে। আবার ID পাঠান।');
+      }
+    }
+
+    if (state.step === 'count') {
+      const ads = Number(text);
+      if (!Number.isInteger(ads) || ads < 1) {
+        return ctx.reply('❌ Ads count 1 বা তার বেশি একটি পূর্ণ সংখ্যা হতে হবে। আবার সংখ্যা পাঠান।');
+      }
+
+      try {
+        const topicRef = db.collection('topics').doc(state.topicId);
+        const topicDoc = await topicRef.get();
+        if (!topicDoc.exists) {
+          delete updateAdsData[userId];
+          return ctx.reply('❌ Video/Topic আর পাওয়া যাচ্ছে না। /ads দিয়ে আবার শুরু করুন।');
+        }
+
+        const oldAds = Math.max(1, Number(topicDoc.data().adsRequired) || 1);
+        await topicRef.update({
+          adsRequired: ads,
+          updatedAt: new Date().toISOString()
+        });
+
+        delete updateAdsData[userId];
+        return ctx.reply(
+          `✅ Ads count সফলভাবে আপডেট হয়েছে!\n\n` +
+          `🆔 Video/Topic ID: ${state.topicId}\n` +
+          `আগে ছিল: ${oldAds}টি Ads\n` +
+          `এখন হবে: ${ads}টি Ads`
+        );
+      } catch (error) {
+        console.error('❌ Error updating ads count:', error);
+        return ctx.reply('❌ Ads count আপডেট করতে সমস্যা হয়েছে। আবার চেষ্টা করুন।');
+      }
+    }
+  }
+
   if (text.startsWith('/')) {
     return;
   }
@@ -795,75 +882,88 @@ app.get('/api/user-unlocked/:userId', async (req, res) => {
   }
 });
 
-app.post('/api/unlock-topic', async (req, res) => {
+async function deliverUnlockedTopic(userId, topicId) {
+  const userRef = db.collection('users').doc(userId.toString());
+  const doc = await userRef.get();
+  const data = doc.exists ? doc.data() : {};
+  let unlockedTopics = data.unlockedTopics || [];
+  let topicUnlockTime = data.topicUnlockTime || {};
+  let sentMessages = data.sentMessages || [];
+
+  const now = Date.now();
+  const THIRTY_MINUTES = 30 * 60 * 1000;
+  const topicRef = db.collection('topics').doc(topicId);
+  const topicDoc = await topicRef.get();
+  if (!topicDoc.exists) throw new Error('Topic not found');
+
+  if (!unlockedTopics.includes(topicId)) {
+    unlockedTopics.push(topicId);
+    topicUnlockTime[topicId] = now;
+  }
+
+  const videos = topicDoc.data().videos || [];
+  for (const videoId of videos) {
+    try {
+      const alreadySent = sentMessages.some(m => m.videoId === videoId && m.topicId === topicId && (now - m.sentAt) < THIRTY_MINUTES);
+      if (alreadySent) continue;
+      const sentMsg = await bot.telegram.sendVideo(userId, videoId, {
+        protect_content: true,
+        caption: '⏳ এই ভিডিও ৩০ মিনিট পর ডিলিট হয়ে যাবে।'
+      });
+      sentMessages.push({ messageId: sentMsg.message_id, chatId: userId, videoId, topicId, sentAt: Date.now() });
+    } catch (sendError) {
+      console.error(`❌ Error sending video:`, sendError.message);
+    }
+  }
+
+  await userRef.set({ unlockedTopics, topicUnlockTime, sentMessages }, { merge: true });
+  return { success: true, videosDelivered: videos.length };
+}
+
+// One completed rewarded ad = one server-side progress increment.
+app.post('/api/ad-complete', async (req, res) => {
   try {
-    const { userId, topicId } = req.body;
-    console.log(`🔓 Unlocking topic ${topicId} for user ${userId}`);
-    
-    const userRef = db.collection('users').doc(userId.toString());
-    const doc = await userRef.get();
-    
-    let unlockedTopics = [];
-    let topicUnlockTime = {};
-    let sentMessages = [];
-    if (doc.exists) {
-      const data = doc.data();
-      unlockedTopics = data.unlockedTopics || [];
-      topicUnlockTime = data.topicUnlockTime || {};
-      sentMessages = data.sentMessages || [];
-    }
-    
-    const now = Date.now();
-    const THIRTY_MINUTES = 30 * 60 * 1000;
-    
-    if (!unlockedTopics.includes(topicId)) {
-      unlockedTopics.push(topicId);
-      topicUnlockTime[topicId] = now;
-    }
-    
-    await userRef.set({
-      unlockedTopics: unlockedTopics,
-      topicUnlockTime: topicUnlockTime
-    }, { merge: true });
-    
-    const topicRef = db.collection('topics').doc(topicId);
-    const topicDoc = await topicRef.get();
-    
-    let videosDelivered = 0;
-    if (topicDoc.exists) {
-      const topicData = topicDoc.data();
-      const videos = topicData.videos || [];
-      console.log(`📹 Sending ${videos.length} videos to user ${userId}`);
-      
-      for (const videoId of videos) {
-        try {
-          const sentMsg = await bot.telegram.sendVideo(userId, videoId, {
-            protect_content: true,
-            caption: '⏳ এই ভিডিও ৩০ মিনিট পর ডিলিট হয়ে যাবে।'
-          });
-          
-          sentMessages.push({
-            messageId: sentMsg.message_id,
-            chatId: userId,
-            videoId: videoId,
-            sentAt: Date.now()
-          });
-          
-          videosDelivered++;
-          console.log(`✅ Video sent to ${userId}`);
-        } catch (sendError) {
-          console.error(`❌ Error sending video:`, sendError.message);
-        }
+    const userId = String(req.body.userId || '').trim();
+    const topicId = String(req.body.topicId || '').trim();
+    if (!userId || !topicId) return res.status(400).json({ error: 'userId and topicId are required' });
+
+    const topicDoc = await db.collection('topics').doc(topicId).get();
+    if (!topicDoc.exists) return res.status(404).json({ error: 'Topic not found' });
+    const required = Math.max(1, Number(topicDoc.data().adsRequired) || 1);
+
+    const userRef = db.collection('users').doc(userId);
+    const result = await db.runTransaction(async tx => {
+      const snap = await tx.get(userRef);
+      const data = snap.exists ? snap.data() : {};
+      const progress = { ...(data.adProgress || {}) };
+      const unlockedTopics = data.unlockedTopics || [];
+      const current = Number(progress[topicId]) || 0;
+
+      if (unlockedTopics.includes(topicId)) {
+        return { count: required, required, unlocked: true };
       }
-      
-      await userRef.set({ sentMessages: sentMessages }, { merge: true });
+
+      const next = Math.min(current + 1, required);
+      progress[topicId] = next;
+      tx.set(userRef, { adProgress: progress }, { merge: true });
+      return { count: next, required, unlocked: next >= required };
+    });
+
+    if (result.unlocked) {
+      await deliverUnlockedTopic(userId, topicId);
+      return res.json({ success: true, count: result.count, required: result.required, unlocked: true });
     }
-    
-    res.json({ success: true, videosDelivered });
+
+    res.json({ success: true, count: result.count, required: result.required, unlocked: false });
   } catch (error) {
-    console.error('Unlock error:', error);
+    console.error('❌ Ad completion error:', error);
     res.status(500).json({ error: error.message });
   }
+});
+
+// Legacy endpoint kept, but it can no longer unlock a topic by itself.
+app.post('/api/unlock-topic', async (req, res) => {
+  return res.status(403).json({ error: 'Complete the required rewarded ads first.' });
 });
 
 cron.schedule('* * * * *', async () => {
