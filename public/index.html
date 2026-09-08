@@ -97,7 +97,7 @@
     <script>
         (function() {
             'use strict';
-            console.log('App started - Fixed Ad Count');
+            console.log('App started - FIXED AD COUNT');
 
             var Telegram = null;
             try {
@@ -156,7 +156,7 @@
 
                     var videoCount = topic.videoCount || (topic.videos ? topic.videos.length : 0);
                     var thumbUrl = topic.thumbnail ? API_BASE + '/thumbnail/' + topic.thumbnail : null;
-                    var adsRequired = topic.adsRequired || 0;
+                    var adsRequired = parseInt(topic.adsRequired) || 1; // ✅ এখানে parseInt ব্যবহার করা হয়েছে
                     var topicUnlocked = unlockedTopics[topic.id] === true;
 
                     var thumbnailHtml = '';
@@ -212,12 +212,14 @@
             function startAdWatch(topic) {
                 if (isWatching) return;
 
-                // ✅ রিসেট সব ভ্যারিয়েবল
+                // ✅ parseInt ব্যবহার করে সঠিক সংখ্যা পাওয়া
                 totalAdsRequired = parseInt(topic.adsRequired) || 1;
                 adCount = 0;
                 adCompleted = false;
                 currentTopic = topic;
                 isWatching = true;
+
+                console.log('🎯 Total ads required:', totalAdsRequired);
 
                 if (currentBtn) {
                     currentBtn.innerHTML = '⏳ দেখা হচ্ছে <span class="progress">(0/' + totalAdsRequired + ')</span>';
@@ -225,7 +227,6 @@
                     currentBtn.disabled = true;
                 }
 
-                // ✅ অ্যাড শুরু
                 showAd();
             }
 
@@ -239,7 +240,6 @@
                 skipBtn.disabled = true;
                 timerDisplay.textContent = '15';
 
-                // OMG Rewarded Interstitial
                 try {
                     show_11737734().then(function() {
                         console.log('✅ Ad completed');
@@ -295,7 +295,6 @@
                     timerInterval = null;
                 }
 
-                // ✅ কাউন্ট বাড়ান
                 adCount++;
 
                 console.log('📊 Ad count:', adCount, '/', totalAdsRequired);
@@ -304,12 +303,11 @@
                     currentBtn.innerHTML = '⏳ দেখা হচ্ছে <span class="progress">(' + adCount + '/' + totalAdsRequired + ')</span>';
                 }
 
-                // ✅ সব অ্যাড শেষ?
                 if (adCount >= totalAdsRequired) {
+                    console.log('🎉 All ads completed! Unlocking...');
                     adCount = 0;
                     unlockTopic(currentTopic);
                 } else {
-                    // ❌ আরও অ্যাড বাকি
                     isWatching = false;
                     setTimeout(function() {
                         startAdWatch(currentTopic);
