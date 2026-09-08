@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>📹 ভিডিও টপিক</title>
-    <script src="//libtl.com/sdk.js" data-zone="11737734" data-sdk="show_11737734"></script>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
         :root{--bg:#0A0A0E;--surface:#15151C;--surface-alt:#1F1F29;--border:#232330;--text:#F5F5F7;--text-dim:#8B8B96;--brand:#FF3B30;--gold:#F5B301;--gold-dark:#C98A00;--gold-ink:#241A00;--success:#34D399}
@@ -85,7 +84,7 @@
     <script>
         (function() {
             'use strict';
-            console.log('App started - OMG onReward');
+            console.log('App started - SIMPLE TIMER AD COUNT');
 
             var Telegram = null;
             try {
@@ -125,7 +124,6 @@
             var totalAdsRequired = 0;
             var adCount = 0;
             var adCompleted = false;
-            var rewardCount = 0;
 
             function renderTopics() {
                 var grid = document.getElementById('topic-grid');
@@ -199,14 +197,13 @@
             }
 
             // =============================================
-            // 🔥 OMG onReward ব্যবহার করে
+            // ✅ SIMPLE TIMER - প্রতিবার 15 সেকেন্ড পর অ্যাড কাউন্ট
             // =============================================
             function startAdWatch(topic) {
                 if (isWatching) return;
 
                 totalAdsRequired = parseInt(topic.adsRequired) || 1;
                 adCount = 0;
-                rewardCount = 0;
                 adCompleted = false;
                 currentTopic = topic;
                 isWatching = true;
@@ -219,106 +216,78 @@
                     currentBtn.disabled = true;
                 }
 
-                // ✅ OMG Reward System
-                try {
-                    show_11737734('pop').then(function() {
-                        // অ্যাড সম্পূর্ণ হয়েছে
-                        console.log('✅ Ad completed via then');
-                        onAdReward();
-                    }).catch(function(e) {
-                        console.error('❌ Ad error:', e);
-                        // error হলে সিমুলেশন
-                        simulateAd();
-                    });
-                } catch (error) {
-                    console.error('❌ Ad init error:', error);
-                    simulateAd();
-                }
+                showAd();
+            }
 
-                // টাইমার (সুরক্ষার জন্য)
+            function showAd() {
+                var overlay = document.getElementById('ad-overlay');
+                var skipBtn = document.getElementById('adSkipBtn');
+                var timerDisplay = document.getElementById('adTimer');
+
+                overlay.classList.add('show');
+                skipBtn.className = 'ad-skip-btn';
+                skipBtn.disabled = true;
+                timerDisplay.textContent = '15';
+
+                // ✅ 15 সেকেন্ড টাইমার
                 var timeLeft = 15;
                 if (timerInterval) clearInterval(timerInterval);
                 timerInterval = setInterval(function() {
                     timeLeft--;
-                    document.getElementById('adTimer').textContent = timeLeft;
+                    timerDisplay.textContent = timeLeft;
+
                     if (timeLeft <= 0) {
                         clearInterval(timerInterval);
                         timerInterval = null;
-                        if (!adCompleted) {
-                            // টাইমার শেষ হলে সিমুলেশন
-                            simulateAd();
+
+                        // ✅ অ্যাড শেষ হয়েছে - কাউন্ট বাড়ান
+                        adCount++;
+                        console.log('📊 Ad count:', adCount, '/', totalAdsRequired);
+
+                        overlay.classList.remove('show');
+
+                        if (currentBtn) {
+                            currentBtn.innerHTML = '⏳ দেখা হচ্ছে <span class="progress">(' + adCount + '/' +
+                                totalAdsRequired + ')</span>';
+                        }
+
+                        if (adCount >= totalAdsRequired) {
+                            console.log('🎉 All ads completed! Unlocking...');
+                            unlockTopic(currentTopic);
+                        } else {
+                            isWatching = false;
+                            setTimeout(function() {
+                                startAdWatch(currentTopic);
+                            }, 500);
                         }
                     }
                 }, 1000);
-            }
 
-            function onAdReward() {
-                adCompleted = true;
-                rewardCount++;
-                adCount = rewardCount;
-
-                console.log('📊 Reward count:', rewardCount, '/', totalAdsRequired);
-
-                if (currentBtn) {
-                    currentBtn.innerHTML = '⏳ দেখা হচ্ছে <span class="progress">(' + rewardCount + '/' + totalAdsRequired +
-                        ')</span>';
-                }
-
-                // অ্যাড ওভারলে বন্ধ
-                document.getElementById('ad-overlay').classList.remove('show');
-
-                if (timerInterval) {
-                    clearInterval(timerInterval);
-                    timerInterval = null;
-                }
-
-                if (rewardCount >= totalAdsRequired) {
-                    console.log('🎉 All ads completed! Unlocking...');
-                    rewardCount = 0;
-                    unlockTopic(currentTopic);
-                } else {
-                    isWatching = false;
-                    setTimeout(function() {
-                        startAdWatch(currentTopic);
-                    }, 500);
-                }
-            }
-
-            function simulateAd() {
-                console.log('🔄 Simulating ad...');
-                adCompleted = true;
-                rewardCount++;
-                adCount = rewardCount;
-
-                if (currentBtn) {
-                    currentBtn.innerHTML = '⏳ দেখা হচ্ছে <span class="progress">(' + rewardCount + '/' + totalAdsRequired +
-                        ')</span>';
-                }
-
-                document.getElementById('ad-overlay').classList.remove('show');
-
-                if (timerInterval) {
-                    clearInterval(timerInterval);
-                    timerInterval = null;
-                }
-
-                if (rewardCount >= totalAdsRequired) {
-                    console.log('🎉 All ads completed! Unlocking...');
-                    rewardCount = 0;
-                    unlockTopic(currentTopic);
-                } else {
-                    isWatching = false;
-                    setTimeout(function() {
-                        startAdWatch(currentTopic);
-                    }, 500);
-                }
+                // Skip বাটন দেখান (টাইমার শেষে)
+                setTimeout(function() {
+                    skipBtn.className = 'ad-skip-btn show';
+                    skipBtn.disabled = false;
+                    skipBtn.onclick = function() {
+                        // Skip করলে অ্যাড কাউন্ট হয় না
+                        overlay.classList.remove('show');
+                        if (timerInterval) {
+                            clearInterval(timerInterval);
+                            timerInterval = null;
+                        }
+                        if (currentBtn) {
+                            currentBtn.textContent = '🔓 ' + totalAdsRequired + 'টি অ্যাড দেখে আনলক করুন';
+                            currentBtn.className = 'btn-unlock';
+                            currentBtn.disabled = false;
+                        }
+                        isWatching = false;
+                    };
+                }, 14000);
             }
 
             function unlockTopic(topic) {
                 unlockedTopics[topic.id] = true;
                 isWatching = false;
                 adCompleted = false;
-                rewardCount = 0;
 
                 if (currentBtn) {
                     currentBtn.textContent = '✅ আনলক করা আছে';
@@ -378,14 +347,6 @@
                         document.getElementById('loading').textContent = '❌ টপিক লোড করতে সমস্যা হয়েছে';
                     });
             }
-
-            // Skip button
-            document.getElementById('adSkipBtn').addEventListener('click', function() {
-                // Skip বাটনে ক্লিক করলে সিমুলেশন
-                if (!adCompleted) {
-                    simulateAd();
-                }
-            });
 
             document.querySelectorAll('.tab').forEach(function(tab) {
                 tab.addEventListener('click', function() {
