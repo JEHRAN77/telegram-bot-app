@@ -81,7 +81,7 @@
     <script>
         (function() {
             'use strict';
-            console.log('App started');
+            console.log('App started - FIXED');
 
             var Telegram = null;
             try {
@@ -194,7 +194,7 @@
             }
 
             // =============================================
-            // ✅ OMG Rewarded Interstitial
+            // ✅ FIXED: SIMPLE TIMER WITH COUNT
             // =============================================
             function startAdWatch(topic) {
                 if (isWatching) return;
@@ -204,6 +204,8 @@
                 adCompleted = false;
                 currentTopic = topic;
                 isWatching = true;
+
+                console.log('🎯 Total ads required:', totalAdsRequired);
 
                 if (currentBtn) {
                     currentBtn.innerHTML = '⏳ দেখা হচ্ছে <span class="progress">(0/' + totalAdsRequired + ')</span>';
@@ -220,20 +222,27 @@
                 skipBtn.disabled = true;
                 timerDisplay.textContent = '15';
 
+                // OMG চেষ্টা করবে, কাজ না করলে সিমুলেশন
                 try {
-                    show_11737734().then(function() {
-                        console.log('✅ Ad completed');
-                        adCompleted = true;
-                        completeAd();
-                    }).catch(function(e) {
-                        console.error('❌ Ad error:', e);
-                        resetAd();
-                    });
+                    if (typeof show_11737734 === 'function') {
+                        show_11737734().then(function() {
+                            console.log('✅ OMG Ad completed');
+                            adCompleted = true;
+                            completeAd();
+                        }).catch(function(e) {
+                            console.log('⚠️ OMG error, using simulation');
+                            simulateAd();
+                        });
+                    } else {
+                        console.log('⚠️ OMG not available, using simulation');
+                        simulateAd();
+                    }
                 } catch (error) {
-                    console.error('❌ Ad init error:', error);
-                    resetAd();
+                    console.log('⚠️ OMG error, using simulation');
+                    simulateAd();
                 }
 
+                // টাইমার (১৫ সেকেন্ড)
                 var timeLeft = 15;
                 if (timerInterval) clearInterval(timerInterval);
                 timerInterval = setInterval(function() {
@@ -243,46 +252,44 @@
                         clearInterval(timerInterval);
                         timerInterval = null;
                         if (!adCompleted) {
-                            completeAd();
+                            simulateAd();
                         }
                     }
                 }, 1000);
+
+                // Skip বাটন (টাইমার শেষে)
+                setTimeout(function() {
+                    skipBtn.className = 'ad-skip-btn show';
+                    skipBtn.disabled = false;
+                    skipBtn.onclick = function() {
+                        if (!adCompleted) {
+                            simulateAd();
+                        }
+                    };
+                }, 14000);
             }
 
-            function completeAd() {
-                var overlay = document.getElementById('ad-overlay');
-                var skipBtn = document.getElementById('adSkipBtn');
-                var timerDisplay = document.getElementById('adTimer');
+            // ✅ সিমুলেশন
+            function simulateAd() {
+                if (adCompleted) return;
+                adCompleted = true;
 
-                if (timerInterval) {
-                    clearInterval(timerInterval);
-                    timerInterval = null;
-                }
-
-                skipBtn.className = 'ad-skip-btn show';
-                skipBtn.disabled = false;
-                timerDisplay.textContent = '✅';
-                skipBtn.onclick = function() {
-                    onAdComplete();
-                };
-            }
-
-            function onAdComplete() {
-                var overlay = document.getElementById('ad-overlay');
-                overlay.classList.remove('show');
+                document.getElementById('ad-overlay').classList.remove('show');
                 if (timerInterval) {
                     clearInterval(timerInterval);
                     timerInterval = null;
                 }
 
                 adCount++;
+                console.log('📊 Ad count:', adCount, '/', totalAdsRequired);
 
                 if (currentBtn) {
-                    currentBtn.innerHTML = '⏳ দেখা হচ্ছে <span class="progress">(' + adCount + '/' + totalAdsRequired + ')</span>';
+                    currentBtn.innerHTML = '⏳ দেখা হচ্ছে <span class="progress">(' + adCount + '/' + totalAdsRequired +
+                        ')</span>';
                 }
 
                 if (adCount >= totalAdsRequired) {
-                    adCount = 0;
+                    console.log('🎉 All ads completed! Unlocking...');
                     unlockTopic(currentTopic);
                 } else {
                     isWatching = false;
@@ -292,26 +299,38 @@
                 }
             }
 
-            function resetAd() {
-                var overlay = document.getElementById('ad-overlay');
-                overlay.classList.remove('show');
+            // ✅ OMG কাজ করলে
+            function completeAd() {
+                document.getElementById('ad-overlay').classList.remove('show');
                 if (timerInterval) {
                     clearInterval(timerInterval);
                     timerInterval = null;
                 }
+
+                adCount++;
+                console.log('📊 Ad count (OMG):', adCount, '/', totalAdsRequired);
+
                 if (currentBtn) {
-                    currentBtn.textContent = '🔓 ' + totalAdsRequired + 'টি অ্যাড দেখে আনলক করুন';
-                    currentBtn.className = 'btn-unlock';
-                    currentBtn.disabled = false;
+                    currentBtn.innerHTML = '⏳ দেখা হচ্ছে <span class="progress">(' + adCount + '/' + totalAdsRequired +
+                        ')</span>';
                 }
-                isWatching = false;
-                adCompleted = false;
+
+                if (adCount >= totalAdsRequired) {
+                    console.log('🎉 All ads completed! Unlocking...');
+                    unlockTopic(currentTopic);
+                } else {
+                    isWatching = false;
+                    setTimeout(function() {
+                        startAdWatch(currentTopic);
+                    }, 500);
+                }
             }
 
             function unlockTopic(topic) {
                 unlockedTopics[topic.id] = true;
                 isWatching = false;
                 adCompleted = false;
+                adCount = 0;
 
                 if (currentBtn) {
                     currentBtn.textContent = '✅ আনলক করা আছে';
