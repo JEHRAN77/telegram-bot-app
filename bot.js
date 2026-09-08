@@ -277,125 +277,6 @@ bot.command('done', async (ctx) => {
   await ctx.reply(`📝 এই টপিকের জন্য একটি টাইটেল দিন (${data.videos.length}টি ভিডিওর জন্য):`);
 });
 
-bot.on('text', async (ctx) => {
-  const userId = ctx.from.id;
-  const text = ctx.message.text;
-  
-  if (text.startsWith('/')) {
-    return;
-  }
-  
-  if (addTopicData[userId]) {
-    const data = addTopicData[userId];
-    if (data.step === 'title') {
-      data.title = text;
-      data.step = 'thumbnail';
-      await ctx.reply('🖼️ এই টপিকের জন্য একটি থাম্বনেইল ইমেজ পাঠান:');
-      return;
-    }
-    if (data.step === 'ads') {
-      const ads = parseInt(text);
-      if (isNaN(ads) || ads < 1) {
-        await ctx.reply('❌ দয়া করে একটি বৈধ সংখ্যা দিন (১ বা তার বেশি):');
-        return;
-      }
-      data.adsRequired = ads;
-      await saveTopic(ctx, data);
-      delete addTopicData[userId];
-      return;
-    }
-  }
-  if (addVideoData[userId]) {
-    const data = addVideoData[userId];
-    if (data.step === 'title') {
-      data.title = text;
-      data.step = 'thumbnail';
-      await ctx.reply('🖼️ এই ভিডিওর জন্য একটি থাম্বনেইল ইমেজ পাঠান:');
-      return;
-    }
-    if (data.step === 'ads') {
-      const ads = parseInt(text);
-      if (isNaN(ads) || ads < 1) {
-        await ctx.reply('❌ দয়া করে একটি বৈধ সংখ্যা দিন (১ বা তার বেশি):');
-        return;
-      }
-      data.adsRequired = ads;
-      await saveVideo(ctx, data);
-      delete addVideoData[userId];
-      return;
-    }
-  }
-});
-
-bot.on('photo', async (ctx) => {
-  const userId = ctx.from.id;
-  const photo = ctx.message.photo;
-  const fileId = photo[photo.length - 1].file_id;
-  
-  try {
-    const storedFileId = await forwardPhotoToStorageChannel(ctx, fileId);
-    
-    if (addTopicData[userId]) {
-      const data = addTopicData[userId];
-      if (data.step === 'thumbnail') {
-        data.thumbnail = storedFileId;
-        data.step = 'ads';
-        await ctx.reply('🔢 এই টপিক আনলক করতে কতগুলো অ্যাড দেখতে হবে? (শুধু সংখ্যা দিন):');
-        return;
-      }
-    }
-    if (addVideoData[userId]) {
-      const data = addVideoData[userId];
-      if (data.step === 'thumbnail') {
-        data.thumbnail = storedFileId;
-        data.step = 'ads';
-        await ctx.reply('🔢 এই ভিডিও আনলক করতে কতগুলো অ্যাড দেখতে হবে? (শুধু সংখ্যা দিন):');
-        return;
-      }
-    }
-  } catch (error) {
-    await ctx.reply('❌ থাম্বনেইল স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে।');
-  }
-});
-
-async function saveTopic(ctx, data) {
-  try {
-    const topicRef = db.collection('topics').doc();
-    await topicRef.set({
-      title: data.title,
-      thumbnail: data.thumbnail,
-      videos: data.videos,
-      adsRequired: data.adsRequired,
-      type: 'multi',
-      videoCount: data.videos.length,
-      createdAt: new Date().toISOString()
-    });
-    await ctx.reply(`✅ টপিক "${data.title}" তৈরি হয়েছে!\n📹 ভিডিও সংখ্যা: ${data.videos.length}\n🔢 অ্যাড প্রয়োজন: ${data.adsRequired}\n🆔 টপিক আইডি: ${topicRef.id}`);
-  } catch (error) {
-    console.error('Error saving topic:', error);
-    await ctx.reply('❌ টপিক সেভ করতে সমস্যা হয়েছে।');
-  }
-}
-
-async function saveVideo(ctx, data) {
-  try {
-    const topicRef = db.collection('topics').doc();
-    await topicRef.set({
-      title: data.title,
-      thumbnail: data.thumbnail,
-      videos: [data.videoId],
-      adsRequired: data.adsRequired,
-      type: 'single',
-      videoCount: 1,
-      createdAt: new Date().toISOString()
-    });
-    await ctx.reply(`✅ ভিডিও "${data.title}" যোগ হয়েছে!\n🆔 টপিক আইডি: ${topicRef.id}`);
-  } catch (error) {
-    console.error('Error saving video:', error);
-    await ctx.reply('❌ ভিডিও সেভ করতে সমস্যা হয়েছে।');
-  }
-}
-
 // =============================================
 // ✅ অ্যাডমিন কমান্ড
 // =============================================
@@ -613,6 +494,126 @@ bot.command('testdb', async (ctx) => {
   }
 });
 
+
+bot.on('text', async (ctx) => {
+  const userId = ctx.from.id;
+  const text = ctx.message.text;
+  
+  if (text.startsWith('/')) {
+    return;
+  }
+  
+  if (addTopicData[userId]) {
+    const data = addTopicData[userId];
+    if (data.step === 'title') {
+      data.title = text;
+      data.step = 'thumbnail';
+      await ctx.reply('🖼️ এই টপিকের জন্য একটি থাম্বনেইল ইমেজ পাঠান:');
+      return;
+    }
+    if (data.step === 'ads') {
+      const ads = parseInt(text);
+      if (isNaN(ads) || ads < 1) {
+        await ctx.reply('❌ দয়া করে একটি বৈধ সংখ্যা দিন (১ বা তার বেশি):');
+        return;
+      }
+      data.adsRequired = ads;
+      await saveTopic(ctx, data);
+      delete addTopicData[userId];
+      return;
+    }
+  }
+  if (addVideoData[userId]) {
+    const data = addVideoData[userId];
+    if (data.step === 'title') {
+      data.title = text;
+      data.step = 'thumbnail';
+      await ctx.reply('🖼️ এই ভিডিওর জন্য একটি থাম্বনেইল ইমেজ পাঠান:');
+      return;
+    }
+    if (data.step === 'ads') {
+      const ads = parseInt(text);
+      if (isNaN(ads) || ads < 1) {
+        await ctx.reply('❌ দয়া করে একটি বৈধ সংখ্যা দিন (১ বা তার বেশি):');
+        return;
+      }
+      data.adsRequired = ads;
+      await saveVideo(ctx, data);
+      delete addVideoData[userId];
+      return;
+    }
+  }
+});
+
+bot.on('photo', async (ctx) => {
+  const userId = ctx.from.id;
+  const photo = ctx.message.photo;
+  const fileId = photo[photo.length - 1].file_id;
+  
+  try {
+    const storedFileId = await forwardPhotoToStorageChannel(ctx, fileId);
+    
+    if (addTopicData[userId]) {
+      const data = addTopicData[userId];
+      if (data.step === 'thumbnail') {
+        data.thumbnail = storedFileId;
+        data.step = 'ads';
+        await ctx.reply('🔢 এই টপিক আনলক করতে কতগুলো অ্যাড দেখতে হবে? (শুধু সংখ্যা দিন):');
+        return;
+      }
+    }
+    if (addVideoData[userId]) {
+      const data = addVideoData[userId];
+      if (data.step === 'thumbnail') {
+        data.thumbnail = storedFileId;
+        data.step = 'ads';
+        await ctx.reply('🔢 এই ভিডিও আনলক করতে কতগুলো অ্যাড দেখতে হবে? (শুধু সংখ্যা দিন):');
+        return;
+      }
+    }
+  } catch (error) {
+    await ctx.reply('❌ থাম্বনেইল স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে।');
+  }
+});
+
+async function saveTopic(ctx, data) {
+  try {
+    const topicRef = db.collection('topics').doc();
+    await topicRef.set({
+      title: data.title,
+      thumbnail: data.thumbnail,
+      videos: data.videos,
+      adsRequired: data.adsRequired,
+      type: 'multi',
+      videoCount: data.videos.length,
+      createdAt: new Date().toISOString()
+    });
+    await ctx.reply(`✅ টপিক "${data.title}" তৈরি হয়েছে!\n📹 ভিডিও সংখ্যা: ${data.videos.length}\n🔢 অ্যাড প্রয়োজন: ${data.adsRequired}\n🆔 টপিক আইডি: ${topicRef.id}`);
+  } catch (error) {
+    console.error('Error saving topic:', error);
+    await ctx.reply('❌ টপিক সেভ করতে সমস্যা হয়েছে।');
+  }
+}
+
+async function saveVideo(ctx, data) {
+  try {
+    const topicRef = db.collection('topics').doc();
+    await topicRef.set({
+      title: data.title,
+      thumbnail: data.thumbnail,
+      videos: [data.videoId],
+      adsRequired: data.adsRequired,
+      type: 'single',
+      videoCount: 1,
+      createdAt: new Date().toISOString()
+    });
+    await ctx.reply(`✅ ভিডিও "${data.title}" যোগ হয়েছে!\n🆔 টপিক আইডি: ${topicRef.id}`);
+  } catch (error) {
+    console.error('Error saving video:', error);
+    await ctx.reply('❌ ভিডিও সেভ করতে সমস্যা হয়েছে।');
+  }
+}
+
 // ============ API ENDPOINTS ============
 
 app.get('/api/users/verify/:userId', async (req, res) => {
@@ -823,65 +824,4 @@ app.listen(process.env.PORT || 3000, () => {
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));// =============================================
-// 🚨 জরুরি ফিক্স - সরাসরি ডেটাবেস থেকে ডেটা পড়া
-// =============================================
-
-bot.command('list2', async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) {
-    return ctx.reply('⛔ শুধুমাত্র অ্যাডমিনের জন্য।');
-  }
-  
-  try {
-    // সরাসরি Firestore থেকে ডেটা পড়া
-    const topicsRef = db.collection('topics');
-    const snapshot = await topicsRef.get();
-    
-    if (snapshot.empty) {
-      return ctx.reply('📭 এখনো কোনো টপিক যোগ করা হয়নি।');
-    }
-    
-    let message = '📋 টপিক লিস্ট (নতুন সিস্টেম):\n\n';
-    let count = 0;
-    snapshot.forEach(doc => {
-      count++;
-      const data = doc.data();
-      message += `${count}. ${data.title || 'নামবিহীন'}\n`;
-      message += `   🆔 ${doc.id}\n`;
-      message += `   📹 ${data.videoCount || 0}টি ভিডিও\n`;
-      message += `   🔢 ${data.adsRequired || 0}টি অ্যাড\n\n`;
-    });
-    
-    await ctx.reply(message);
-  } catch (error) {
-    console.error('❌ list2 error:', error);
-    await ctx.reply('❌ তালিকা দেখাতে সমস্যা: ' + error.message);
-  }
-});
-
-bot.command('admin2', async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) {
-    return ctx.reply('⛔ শুধুমাত্র অ্যাডমিনের জন্য।');
-  }
-  
-  try {
-    const usersRef = db.collection('users');
-    const snapshot = await usersRef.get();
-    
-    const users = [];
-    snapshot.forEach(doc => {
-      users.push(doc.data());
-    });
-    
-    const verifiedUsers = users.filter(u => u.verified === true);
-    
-    await ctx.reply(
-      `📊 অ্যাডমিন প্যানেল (নতুন সিস্টেম)\n\n` +
-      `✅ যাচাইকৃত: ${verifiedUsers.length}\n` +
-      `👥 মোট ইউজার: ${users.length}`
-    );
-  } catch (error) {
-    console.error('❌ admin2 error:', error);
-    await ctx.reply('❌ অ্যাডমিন প্যানেল লোড করতে সমস্যা: ' + error.message);
-  }
-});
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
