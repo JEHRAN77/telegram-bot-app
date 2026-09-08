@@ -21,8 +21,6 @@
             --success:#34D399;
         }
         body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased}
-
-        /* Header */
         header{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:rgba(10,10,14,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10}
         header .logo{font-size:17px;font-weight:700;letter-spacing:-.2px;color:var(--text)}
         header .logo span{color:var(--brand)}
@@ -30,31 +28,21 @@
         header .profile .avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--brand),#B3261E);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:#fff;overflow:hidden}
         header .profile .username{font-size:13px;color:var(--text-dim);display:none}
         @media(min-width:480px){header .profile .username{display:block}}
-
-        /* Categories */
         .categories{display:flex;gap:8px;padding:12px 16px;overflow-x:auto;scrollbar-width:none;background:var(--bg);border-bottom:1px solid var(--border)}
         .categories::-webkit-scrollbar{display:none}
         .categories .tab{padding:7px 16px;border-radius:8px;font-size:13.5px;font-weight:500;color:var(--text-dim);background:var(--surface);white-space:nowrap;cursor:pointer;transition:background .2s ease,color .2s ease;border:1px solid var(--border)}
         .categories .tab.active{background:var(--text);color:var(--bg);border-color:var(--text)}
         .categories .tab:active{transform:scale(.96)}
-
-        /* Grid */
         #topic-grid{display:grid;grid-template-columns:1fr;gap:14px;padding:16px;padding-bottom:80px}
         @media(min-width:768px){#topic-grid{grid-template-columns:1fr 1fr;gap:16px}}
-
-        /* Card */
         .topic-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden}
         .thumbnail-container{position:relative;aspect-ratio:16/9;background:var(--surface-alt);overflow:hidden}
         .thumbnail-container img{width:100%;height:100%;object-fit:cover;display:block}
         .thumbnail-container .lock-icon{position:absolute;top:8px;right:8px;background:rgba(0,0,0,.65);backdrop-filter:blur(4px);border-radius:8px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:13px}
         .thumbnail-container .lock-icon.unlocked{background:rgba(52,211,153,.85)}
         .thumbnail-container .count-badge{position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,.72);backdrop-filter:blur(4px);border-radius:6px;padding:2px 7px;font-size:11.5px;font-weight:600;color:#fff;display:flex;align-items:center;gap:3px}
-
-        /* Info */
         .video-info{padding:12px 14px 10px 14px}
         .video-info .title{font-size:15px;font-weight:600;line-height:1.35;color:var(--text);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-
-        /* Button */
         .topic-actions{padding:0 14px 14px 14px}
         .btn-unlock{width:100%;padding:12px;border:none;border-radius:10px;font-size:14.5px;font-weight:600;cursor:pointer;transition:opacity .2s ease,transform .15s ease;display:flex;align-items:center;justify-content:center;gap:6px}
         .btn-unlock{background:linear-gradient(135deg,var(--gold),var(--gold-dark));color:var(--gold-ink)}
@@ -63,11 +51,7 @@
         .btn-unlock.unlocked{background:rgba(52,211,153,.14);color:var(--success);border:1px solid rgba(52,211,153,.35)}
         .btn-unlock.watching{background:var(--surface-alt);color:var(--text-dim);border:1px solid var(--border)}
         .btn-unlock .progress{font-variant-numeric:tabular-nums}
-
-        /* Loading */
         #loading{text-align:center;padding:60px 20px;color:var(--text-dim);font-size:14.5px}
-
-        /* Ad Overlay */
         #ad-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;background:rgba(6,6,9,.96);justify-content:center;align-items:center;flex-direction:column;padding:20px}
         #ad-overlay.show{display:flex}
         #ad-overlay .ad-content{width:100%;max-width:360px;text-align:center}
@@ -76,13 +60,11 @@
         #ad-overlay .ad-label{color:var(--text-dim);font-size:14.5px;letter-spacing:.2px}
         #ad-overlay .ad-skip-btn{background:linear-gradient(135deg,var(--gold),var(--gold-dark));color:var(--gold-ink);border:none;border-radius:10px;padding:13px 28px;font-size:16px;font-weight:600;cursor:pointer;display:none;margin-top:18px}
         #ad-overlay .ad-skip-btn.show{display:inline-block}
-
         @media(max-width:480px){header .logo{font-size:15px}.video-info .title{font-size:14px}.btn-unlock{font-size:13.5px;padding:11px}#ad-overlay .ad-timer{font-size:34px}}
     </style>
 </head>
 <body>
 
-    <!-- Header -->
     <header>
         <div class="logo">📹 <span>Viral</span>Zone</div>
         <div class="profile">
@@ -93,7 +75,6 @@
         </div>
     </header>
 
-    <!-- Categories -->
     <div class="categories">
         <button class="tab active" data-category="all">সব</button>
         <button class="tab" data-category="trending">ট্রেন্ডিং</button>
@@ -101,11 +82,9 @@
         <button class="tab" data-category="popular">জনপ্রিয়</button>
     </div>
 
-    <!-- Grid -->
     <div id="loading">⏳ লোড হচ্ছে...</div>
     <div id="topic-grid"></div>
 
-    <!-- Ad Overlay -->
     <div id="ad-overlay">
         <div class="ad-content">
             <div class="ad-label">⏳ অ্যাড দেখুন</div>
@@ -126,7 +105,6 @@
                 if (Telegram) Telegram.ready();
             } catch (e) {}
 
-            // ===== User Info =====
             function getUserName() {
                 try {
                     if (Telegram && Telegram.initDataUnsafe && Telegram.initDataUnsafe.user) {
@@ -149,7 +127,6 @@
             document.getElementById('userNameDisplay').textContent = userName;
             document.getElementById('avatarText').textContent = userName.charAt(0).toUpperCase();
 
-            // ===== API =====
             var API_BASE = '/api';
             var topics = [];
             var unlockedTopics = {};
@@ -161,7 +138,6 @@
             var adCount = 0;
             var adCompleted = false;
 
-            // ===== Render Topics =====
             function renderTopics() {
                 var grid = document.getElementById('topic-grid');
                 var loading = document.getElementById('loading');
@@ -180,7 +156,7 @@
 
                     var videoCount = topic.videoCount || (topic.videos ? topic.videos.length : 0);
                     var thumbUrl = topic.thumbnail ? API_BASE + '/thumbnail/' + topic.thumbnail : null;
-                    var adsRequired = topic.adsRequired || 0;
+                    var adsRequired = parseInt(topic.adsRequired) || 1;
                     var topicUnlocked = unlockedTopics[topic.id] === true;
 
                     var thumbnailHtml = '';
@@ -233,11 +209,10 @@
                 });
             }
 
-            // ===== OMG Rewarded Interstitial =====
             function startAdWatch(topic) {
                 if (isWatching) return;
 
-                totalAdsRequired = topic.adsRequired || 1;
+                totalAdsRequired = parseInt(topic.adsRequired) || 1;
                 adCount = 0;
                 adCompleted = false;
                 currentTopic = topic;
@@ -258,7 +233,6 @@
                 skipBtn.disabled = true;
                 timerDisplay.textContent = '15';
 
-                // OMG Rewarded Interstitial
                 try {
                     show_11737734().then(function() {
                         console.log('✅ Ad completed');
@@ -281,7 +255,6 @@
                     if (timeLeft <= 0) {
                         clearInterval(timerInterval);
                         timerInterval = null;
-                        // যদি OMG কাজ না করে, তাহলে টাইমার শেষে আনলক
                         if (!adCompleted) {
                             completeAd();
                         }
@@ -371,7 +344,6 @@
                 renderTopics();
             }
 
-            // ===== Load Data =====
             function loadUnlockedStatus() {
                 var userId = getUserId();
                 if (!userId) { renderTopics(); return; }
@@ -413,7 +385,6 @@
                     });
             }
 
-            // ===== Categories =====
             document.querySelectorAll('.tab').forEach(function(tab) {
                 tab.addEventListener('click', function() {
                     document.querySelectorAll('.tab').forEach(function(t) {
@@ -423,7 +394,6 @@
                 });
             });
 
-            // ===== Init =====
             setInterval(function() {
                 loadUnlockedStatus();
             }, 60000);
