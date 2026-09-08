@@ -199,6 +199,10 @@ bot.command('addvideo', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) {
     return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
   }
+  // নতুন /addvideo শুরু হলে আগের অসম্পূর্ণ flow/state পরিষ্কার করি
+  delete updateAdsData[ctx.from.id];
+  delete addTopicData[ctx.from.id];
+  delete broadcastData[ctx.from.id];
   addVideoData[ctx.from.id] = { step: 'video' };
   await ctx.reply('📹 ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)');
 });
@@ -207,6 +211,10 @@ bot.command('addtopic', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) {
     return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
   }
+  // নতুন /addtopic শুরু হলে আগের অসম্পূর্ণ flow/state পরিষ্কার করি
+  delete updateAdsData[ctx.from.id];
+  delete addVideoData[ctx.from.id];
+  delete broadcastData[ctx.from.id];
   addTopicData[ctx.from.id] = { step: 'video', videos: [] };
   await ctx.reply('📹 প্রথম ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)');
 });
@@ -305,6 +313,10 @@ bot.command('ads', async (ctx) => {
       return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
     }
 
+    // /ads শুরু হলে addvideo/addtopic/broadcast-এর পুরোনো state বন্ধ করি
+    delete addVideoData[ctx.from.id];
+    delete addTopicData[ctx.from.id];
+    delete broadcastData[ctx.from.id];
     updateAdsData[ctx.from.id] = { step: 'topicId' };
     await ctx.reply(
       '🎬 কোন ভিডিও/টপিকের Ads count পরিবর্তন করতে চান?\n\n' +
