@@ -81,7 +81,7 @@
     <script>
         (function() {
             'use strict';
-            console.log('App started - FIXED');
+            console.log('App started - FIXED: Ads stops after unlock');
 
             var Telegram = null;
             try {
@@ -121,6 +121,7 @@
             var totalAdsRequired = 0;
             var adCount = 0;
             var adCompleted = false;
+            var isUnlocking = false;
 
             function renderTopics() {
                 var grid = document.getElementById('topic-grid');
@@ -194,10 +195,12 @@
             }
 
             // =============================================
-            // ✅ FIXED: SIMPLE TIMER WITH COUNT
+            // ✅ FIXED: Ads stops after unlock
             // =============================================
             function startAdWatch(topic) {
                 if (isWatching) return;
+                if (isUnlocking) return;
+                if (unlockedTopics[topic.id] === true) return;
 
                 totalAdsRequired = parseInt(topic.adsRequired) || 1;
                 adCount = 0;
@@ -222,7 +225,7 @@
                 skipBtn.disabled = true;
                 timerDisplay.textContent = '15';
 
-                // OMG চেষ্টা করবে, কাজ না করলে সিমুলেশন
+                // OMG চেষ্টা করবে
                 try {
                     if (typeof show_11737734 === 'function') {
                         show_11737734().then(function() {
@@ -242,7 +245,7 @@
                     simulateAd();
                 }
 
-                // টাইমার (১৫ সেকেন্ড)
+                // টাইমার
                 var timeLeft = 15;
                 if (timerInterval) clearInterval(timerInterval);
                 timerInterval = setInterval(function() {
@@ -257,21 +260,21 @@
                     }
                 }, 1000);
 
-                // Skip বাটন (টাইমার শেষে)
+                // Skip বাটন
                 setTimeout(function() {
                     skipBtn.className = 'ad-skip-btn show';
                     skipBtn.disabled = false;
                     skipBtn.onclick = function() {
-                        if (!adCompleted) {
+                        if (!adCompleted && !isUnlocking) {
                             simulateAd();
                         }
                     };
                 }, 14000);
             }
 
-            // ✅ সিমুলেশন
             function simulateAd() {
                 if (adCompleted) return;
+                if (isUnlocking) return;
                 adCompleted = true;
 
                 document.getElementById('ad-overlay').classList.remove('show');
@@ -299,8 +302,8 @@
                 }
             }
 
-            // ✅ OMG কাজ করলে
             function completeAd() {
+                if (isUnlocking) return;
                 document.getElementById('ad-overlay').classList.remove('show');
                 if (timerInterval) {
                     clearInterval(timerInterval);
@@ -327,10 +330,23 @@
             }
 
             function unlockTopic(topic) {
-                unlockedTopics[topic.id] = true;
+                if (isUnlocking) return;
+                isUnlocking = true;
                 isWatching = false;
                 adCompleted = false;
                 adCount = 0;
+
+                // স্টপ টাইমার
+                if (timerInterval) {
+                    clearInterval(timerInterval);
+                    timerInterval = null;
+                }
+
+                // ওভারলে বন্ধ
+                document.getElementById('ad-overlay').classList.remove('show');
+
+                // আনলক মার্ক
+                unlockedTopics[topic.id] = true;
 
                 if (currentBtn) {
                     currentBtn.textContent = '✅ আনলক করা আছে';
@@ -347,7 +363,13 @@
                     }).catch(function(err) { console.error('Unlock error:', err); });
                 }
 
+                // রি-রেন্ডার
                 renderTopics();
+
+                // আনলক ফ্ল্যাগ রিসেট
+                setTimeout(function() {
+                    isUnlocking = false;
+                }, 1000);
             }
 
             function loadUnlockedStatus() {
