@@ -31,6 +31,7 @@ const MINI_APP_URL = 'https://telegram-bot-app-24ti.onrender.com';
 
 let addTopicData = {};
 let addVideoData = {};
+let broadcastData = {};
 
 async function getOrCreateUser(userId, username, firstName, lastName) {
   try {
@@ -300,11 +301,11 @@ bot.command('list', async (ctx) => {
     snapshot.docs.forEach((doc) => {
       const data = doc.data();
       message += `📌 ${data.title || 'নামবিহীন'}\n`;
-      message += `   🆔 ${doc.id}\n`;
+      message += `   🆔 <code>${doc.id}</code>\n`;
       message += `   📹 ${data.videoCount || 0}টি ভিডিও\n`;
       message += `   🔢 ${data.adsRequired || 0}টি অ্যাড\n\n`;
     });
-    await ctx.reply(message);
+    await ctx.reply(message, { parse_mode: 'HTML' });
   } catch (error) {
     console.error('❌ Error in /list:', error);
     await ctx.reply('❌ তালিকা দেখাতে সমস্যা: ' + error.message);
@@ -394,18 +395,22 @@ bot.command('delete', async (ctx) => {
 bot.command('broadcast', async (ctx) => {
   try {
     console.log('📢 /broadcast command by:', ctx.from.id);
-    
+
     if (ctx.from.id !== ADMIN_ID) {
       return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
     }
 
-    const args = ctx.message.text.split(' ');
-    if (args.length < 2) {
-      return ctx.reply('⚠️ মেসেজ দিন:\n/broadcast <আপনার মেসেজ>');
-    }
+    broadcastData[ctx.from.id] = { step: 'image' };
+    await ctx.reply('🖼️ ব্রডকাস্টের সাথে একটি ছবি পাঠাতে চাইলে এখন পাঠান।\nছবি ছাড়া শুধু টেক্সট পাঠাতে চাইলে "skip" লিখুন।');
+  } catch (error) {
+    console.error('❌ Error in /broadcast:', error);
+    await ctx.reply('❌ ব্রডকাস্ট শুরু করতে সমস্যা: ' + error.message);
+  }
+});
 
-    const message = args.slice(1).join(' ');
-    await ctx.reply(`⏳ ব্রডকাস্ট শুরু হচ্ছে...`);
+async function runBroadcast(ctx, data) {
+  try {
+    await ctx.reply('⏳ ব্রডকাস্ট শুরু হচ্ছে...');
 
     const snapshot = await db.collection('users').where('verified', '==', true).get();
     const users = snapshot.docs.map(doc => doc.data());
@@ -417,20 +422,26 @@ bot.command('broadcast', async (ctx) => {
     let success = 0, failed = 0;
     for (const user of users) {
       try {
-        await bot.telegram.sendMessage(user.userId, message);
+        if (data.image) {
+          await bot.telegram.sendPhoto(user.userId, data.image, { caption: data.message });
+        } else {
+          await bot.telegram.sendMessage(user.userId, data.message);
+        }
         success++;
       } catch (error) {
         failed++;
         console.error(`❌ Failed to send to ${user.userId}:`, error.message);
       }
+      // ছোট delay, একসাথে অনেক বেশি fast না পাঠানোর জন্য (Telegram rate limit avoid করতে)
+      await new Promise(resolve => setTimeout(resolve, 40));
     }
 
     await ctx.reply(`✅ ব্রডকাস্ট শেষ!\n✅ সফল: ${success}\n❌ ব্যর্থ: ${failed}`);
   } catch (error) {
-    console.error('❌ Error in /broadcast:', error);
+    console.error('❌ Error in broadcast run:', error);
     await ctx.reply('❌ ব্রডকাস্ট করতে সমস্যা: ' + error.message);
   }
-});
+}
 
 // =============================================
 // 🩺 ডায়াগনস্টিক টুল
@@ -502,7 +513,26 @@ bot.on('text', async (ctx) => {
   if (text.startsWith('/')) {
     return;
   }
-  
+
+  if (broadcastData[userId]) {
+    const data = broadcastData[userId];
+    if (data.step === 'image') {
+      if (text.toLowerCase() === 'skip') {
+        data.step = 'message';
+        await ctx.reply('📝 ব্রডকাস্টের মেসেজ লিখুন (রেফার লিংক সহ):');
+      } else {
+        await ctx.reply('🖼️ ছবি পাঠান, অথবা ছবি ছাড়া এগোতে "skip" লিখুন।');
+      }
+      return;
+    }
+    if (data.step === 'message') {
+      data.message = text;
+      await runBroadcast(ctx, data);
+      delete broadcastData[userId];
+      return;
+    }
+  }
+
   if (addTopicData[userId]) {
     const data = addTopicData[userId];
     if (data.step === 'title') {
@@ -549,7 +579,14 @@ bot.on('photo', async (ctx) => {
   const userId = ctx.from.id;
   const photo = ctx.message.photo;
   const fileId = photo[photo.length - 1].file_id;
-  
+
+  if (broadcastData[userId] && broadcastData[userId].step === 'image') {
+    broadcastData[userId].image = fileId;
+    broadcastData[userId].step = 'message';
+    await ctx.reply('📝 এবার ব্রডকাস্টের মেসেজ লিখুন (রেফার লিংক সহ):');
+    return;
+  }
+
   try {
     const storedFileId = await forwardPhotoToStorageChannel(ctx, fileId);
     
@@ -588,7 +625,7 @@ async function saveTopic(ctx, data) {
       videoCount: data.videos.length,
       createdAt: new Date().toISOString()
     });
-    await ctx.reply(`✅ টপিক "${data.title}" তৈরি হয়েছে!\n📹 ভিডিও সংখ্যা: ${data.videos.length}\n🔢 অ্যাড প্রয়োজন: ${data.adsRequired}\n🆔 টপিক আইডি: ${topicRef.id}`);
+    await ctx.reply(`✅ টপিক "${data.title}" তৈরি হয়েছে!\n📹 ভিডিও সংখ্যা: ${data.videos.length}\n🔢 অ্যাড প্রয়োজন: ${data.adsRequired}\n🆔 টপিক আইডি: <code>${topicRef.id}</code>`, { parse_mode: 'HTML' });
   } catch (error) {
     console.error('Error saving topic:', error);
     await ctx.reply('❌ টপিক সেভ করতে সমস্যা হয়েছে।');
@@ -607,7 +644,7 @@ async function saveVideo(ctx, data) {
       videoCount: 1,
       createdAt: new Date().toISOString()
     });
-    await ctx.reply(`✅ ভিডিও "${data.title}" যোগ হয়েছে!\n🆔 টপিক আইডি: ${topicRef.id}`);
+    await ctx.reply(`✅ ভিডিও "${data.title}" যোগ হয়েছে!\n🆔 টপিক আইডি: <code>${topicRef.id}</code>`, { parse_mode: 'HTML' });
   } catch (error) {
     console.error('Error saving video:', error);
     await ctx.reply('❌ ভিডিও সেভ করতে সমস্যা হয়েছে।');
