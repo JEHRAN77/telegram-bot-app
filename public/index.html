@@ -7,72 +7,84 @@
     <script src="//libtl.com/sdk.js" data-zone="11737734" data-sdk="show_11737734"></script>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
-        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f0f0f;color:#fff;min-height:100vh}
-        
+        :root{
+            --bg:#0A0A0E;
+            --surface:#15151C;
+            --surface-alt:#1F1F29;
+            --border:#232330;
+            --text:#F5F5F7;
+            --text-dim:#8B8B96;
+            --brand:#FF3B30;
+            --gold:#F5B301;
+            --gold-dark:#C98A00;
+            --gold-ink:#241A00;
+            --success:#34D399;
+        }
+        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased}
+
         /* Header */
-        header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#0f0f0f;border-bottom:1px solid #272727;position:sticky;top:0;z-index:10}
-        header .logo{font-size:18px;font-weight:700;color:#fff}
-        header .logo span{color:#ff0000}
+        header{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:rgba(10,10,14,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10}
+        header .logo{font-size:17px;font-weight:700;letter-spacing:-.2px;color:var(--text)}
+        header .logo span{color:var(--brand)}
         header .profile{display:flex;align-items:center;gap:10px}
-        header .profile .avatar{width:32px;height:32px;border-radius:50%;background:#2b7fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;color:#fff;overflow:hidden}
-        header .profile .username{font-size:14px;color:#aaa;display:none}
+        header .profile .avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--brand),#B3261E);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:#fff;overflow:hidden}
+        header .profile .username{font-size:13px;color:var(--text-dim);display:none}
         @media(min-width:480px){header .profile .username{display:block}}
-        
+
         /* Categories */
-        .categories{display:flex;gap:8px;padding:12px 16px;overflow-x:auto;scrollbar-width:none;background:#0f0f0f;border-bottom:1px solid #1a1a1a}
+        .categories{display:flex;gap:8px;padding:12px 16px;overflow-x:auto;scrollbar-width:none;background:var(--bg);border-bottom:1px solid var(--border)}
         .categories::-webkit-scrollbar{display:none}
-        .categories .tab{padding:6px 16px;border-radius:20px;font-size:14px;font-weight:500;color:#aaa;background:#1a1a1a;white-space:nowrap;cursor:pointer;transition:all .3s ease;border:none}
-        .categories .tab.active{background:#fff;color:#0f0f0f}
-        .categories .tab:active{transform:scale(.95)}
-        
+        .categories .tab{padding:7px 16px;border-radius:8px;font-size:13.5px;font-weight:500;color:var(--text-dim);background:var(--surface);white-space:nowrap;cursor:pointer;transition:background .2s ease,color .2s ease;border:1px solid var(--border)}
+        .categories .tab.active{background:var(--text);color:var(--bg);border-color:var(--text)}
+        .categories .tab:active{transform:scale(.96)}
+
         /* Grid */
-        #topic-grid{display:grid;grid-template-columns:1fr;gap:16px;padding:16px;padding-bottom:80px}
-        @media(min-width:768px){#topic-grid{grid-template-columns:1fr 1fr;gap:20px}}
-        
+        #topic-grid{display:grid;grid-template-columns:1fr;gap:14px;padding:16px;padding-bottom:80px}
+        @media(min-width:768px){#topic-grid{grid-template-columns:1fr 1fr;gap:16px}}
+
         /* Card */
-        .topic-card{background:#1a1a1a;border-radius:12px;overflow:hidden;transition:transform .2s ease}
-        .topic-card:active{transform:scale(.98)}
-        .thumbnail-container{position:relative;aspect-ratio:16/9;background:#2a2a2a;overflow:hidden}
-        .thumbnail-container img{width:100%;height:100%;object-fit:cover}
-        .thumbnail-container .lock-icon{position:absolute;top:8px;right:8px;background:rgba(0,0,0,.7);border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff}
-        .thumbnail-container .lock-icon.unlocked{background:rgba(34,197,94,.8)}
-        
+        .topic-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden}
+        .thumbnail-container{position:relative;aspect-ratio:16/9;background:var(--surface-alt);overflow:hidden}
+        .thumbnail-container img{width:100%;height:100%;object-fit:cover;display:block}
+        .thumbnail-container .lock-icon{position:absolute;top:8px;right:8px;background:rgba(0,0,0,.65);backdrop-filter:blur(4px);border-radius:8px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:13px}
+        .thumbnail-container .lock-icon.unlocked{background:rgba(52,211,153,.85)}
+        .thumbnail-container .count-badge{position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,.72);backdrop-filter:blur(4px);border-radius:6px;padding:2px 7px;font-size:11.5px;font-weight:600;color:#fff;display:flex;align-items:center;gap:3px}
+
         /* Info */
-        .video-info{padding:12px 14px}
-        .video-info .title{font-size:16px;font-weight:600;line-height:1.3;color:#fff;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-        .video-info .channel-name{font-size:13px;color:#aaa;margin-top:4px}
-        .video-info .meta{display:flex;align-items:center;gap:8px;font-size:13px;color:#888;margin-top:4px}
-        .video-info .meta .dot{width:4px;height:4px;border-radius:50%;background:#888}
-        
+        .video-info{padding:12px 14px 10px 14px}
+        .video-info .title{font-size:15px;font-weight:600;line-height:1.35;color:var(--text);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+
         /* Button */
         .topic-actions{padding:0 14px 14px 14px}
-        .btn-unlock{width:100%;padding:12px;border:none;border-radius:10px;font-size:15px;font-weight:600;color:#fff;cursor:pointer;transition:all .3s ease;background:#dc2626}
+        .btn-unlock{width:100%;padding:12px;border:none;border-radius:10px;font-size:14.5px;font-weight:600;cursor:pointer;transition:opacity .2s ease,transform .15s ease;display:flex;align-items:center;justify-content:center;gap:6px}
+        .btn-unlock{background:linear-gradient(135deg,var(--gold),var(--gold-dark));color:var(--gold-ink)}
         .btn-unlock:active{transform:scale(.97)}
-        .btn-unlock:disabled{opacity:.6;cursor:not-allowed}
-        .btn-unlock.unlocked{background:#22c55e}
-        .btn-unlock.watching{background:#f59e0b}
-        
+        .btn-unlock:disabled{opacity:.65;cursor:not-allowed}
+        .btn-unlock.unlocked{background:rgba(52,211,153,.14);color:var(--success);border:1px solid rgba(52,211,153,.35)}
+        .btn-unlock.watching{background:var(--surface-alt);color:var(--text-dim);border:1px solid var(--border)}
+        .btn-unlock .progress{font-variant-numeric:tabular-nums}
+
         /* Loading */
-        #loading{text-align:center;padding:40px;color:#888;font-size:16px}
-        
+        #loading{text-align:center;padding:60px 20px;color:var(--text-dim);font-size:14.5px}
+
         /* Ad Overlay */
-        #ad-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;background:rgba(0,0,0,.9);justify-content:center;align-items:center;flex-direction:column;padding:20px}
+        #ad-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;background:rgba(6,6,9,.96);justify-content:center;align-items:center;flex-direction:column;padding:20px}
         #ad-overlay.show{display:flex}
-        #ad-overlay .ad-content{width:100%;max-width:400px;text-align:center}
-        #ad-overlay .ad-timer{color:#fff;font-size:48px;font-weight:700;margin:16px 0}
-        #ad-overlay .ad-timer span{color:#ff0000}
-        #ad-overlay .ad-label{color:#aaa;font-size:16px;margin-bottom:10px}
-        #ad-overlay .ad-skip-btn{background:#22c55e;color:#fff;border:none;border-radius:10px;padding:12px 30px;font-size:18px;font-weight:600;cursor:pointer;display:none;margin-top:16px}
+        #ad-overlay .ad-content{width:100%;max-width:360px;text-align:center}
+        #ad-overlay .ad-timer{color:var(--text);font-size:44px;font-weight:700;margin:14px 0;font-variant-numeric:tabular-nums}
+        #ad-overlay .ad-timer span{color:var(--gold)}
+        #ad-overlay .ad-label{color:var(--text-dim);font-size:14.5px;letter-spacing:.2px}
+        #ad-overlay .ad-skip-btn{background:linear-gradient(135deg,var(--gold),var(--gold-dark));color:var(--gold-ink);border:none;border-radius:10px;padding:13px 28px;font-size:16px;font-weight:600;cursor:pointer;display:none;margin-top:18px}
         #ad-overlay .ad-skip-btn.show{display:inline-block}
-        
-        @media(max-width:480px){header .logo{font-size:16px}.video-info .title{font-size:14px}.btn-unlock{font-size:14px;padding:10px}#ad-overlay .ad-timer{font-size:36px}}
+
+        @media(max-width:480px){header .logo{font-size:15px}.video-info .title{font-size:14px}.btn-unlock{font-size:13.5px;padding:11px}#ad-overlay .ad-timer{font-size:34px}}
     </style>
 </head>
 <body>
 
     <!-- Header -->
     <header>
-        <div class="logo">📹 <span>Viral</span> Zone</div>
+        <div class="logo">📹 <span>Viral</span>Zone</div>
         <div class="profile">
             <span class="username" id="userNameDisplay">ইউজার</span>
             <div class="avatar" id="avatarDisplay">
@@ -187,22 +199,17 @@
                         btnHtml = '<button class="btn-unlock unlocked" disabled>✅ আনলক করা আছে</button>';
                     } else {
                         btnHtml = '<button class="btn-unlock" data-topic-id="' + topic.id + '" data-ads="' +
-                            adsRequired + '">🎬 ' + adsRequired + 'টি অ্যাড দেখে আনলক করুন</button>';
+                            adsRequired + '">🔓 ' + adsRequired + 'টি অ্যাড দেখে আনলক করুন</button>';
                     }
 
                     card.innerHTML = `
                         <div class="thumbnail-container">
                             ${thumbnailHtml}
                             <div class="${lockClass}">${lockIcon}</div>
+                            <div class="count-badge">📹 ${videoCount}</div>
                         </div>
                         <div class="video-info">
                             <div class="title">${topic.title || 'নামবিহীন টপিক'}</div>
-                            <div class="channel-name">📹 ${videoCount}টি ভিডিও</div>
-                            <div class="meta">
-                                <span>🔢 ${adsRequired}টি অ্যাড</span>
-                                <span class="dot"></span>
-                                <span>${topicUnlocked ? '✅ আনলকড' : '🔒 লকড'}</span>
-                            </div>
                         </div>
                         <div class="topic-actions">
                             ${btnHtml}
@@ -237,7 +244,7 @@
                 isWatching = true;
 
                 if (currentBtn) {
-                    currentBtn.textContent = '⏳ অ্যাড দেখছেন... (0/' + totalAdsRequired + ')';
+                    currentBtn.innerHTML = '⏳ দেখা হচ্ছে <span class="progress">(0/' + totalAdsRequired + ')</span>';
                     currentBtn.className = 'btn-unlock watching';
                     currentBtn.disabled = true;
                 }
@@ -311,7 +318,7 @@
                 adCount++;
 
                 if (currentBtn) {
-                    currentBtn.textContent = '⏳ অ্যাড দেখছেন... (' + adCount + '/' + totalAdsRequired + ')';
+                    currentBtn.innerHTML = '⏳ দেখা হচ্ছে <span class="progress">(' + adCount + '/' + totalAdsRequired + ')</span>';
                 }
 
                 if (adCount >= totalAdsRequired) {
@@ -332,7 +339,7 @@
                     timerInterval = null;
                 }
                 if (currentBtn) {
-                    currentBtn.textContent = '🎬 ' + totalAdsRequired + 'টি অ্যাড দেখে আনলক করুন';
+                    currentBtn.textContent = '🔓 ' + totalAdsRequired + 'টি অ্যাড দেখে আনলক করুন';
                     currentBtn.className = 'btn-unlock';
                     currentBtn.disabled = false;
                 }

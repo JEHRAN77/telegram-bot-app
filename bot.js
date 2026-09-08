@@ -116,17 +116,14 @@ bot.start(async (ctx) => {
       ctx.from.first_name,
       ctx.from.last_name
     );
-    if (user.verified) {
-      return ctx.reply(
-        '🎉 আপনি ইতিমধ্যে যাচাইকৃত!',
-        Markup.inlineKeyboard([
-          Markup.button.webApp('🚀 Open App', MINI_APP_URL)
-        ])
-      );
-    }
+
+    // প্রতিবার লাইভ চেক করা হয় — পুরনো "verified" flag কখনোই সরাসরি trust করা হয় না
     const allJoined = await checkAllChannels(ctx);
+
     if (allJoined) {
-      await updateUser(userId, { verified: true, verifiedAt: new Date().toISOString() });
+      if (!user.verified) {
+        await updateUser(userId, { verified: true, verifiedAt: new Date().toISOString() });
+      }
       return ctx.reply(
         '✅ যাচাই সফল!',
         Markup.inlineKeyboard([
@@ -134,6 +131,12 @@ bot.start(async (ctx) => {
         ])
       );
     }
+
+    // চ্যানেলে নেই — আগে verified থাকলেও এখন সেটা false করে দেওয়া হচ্ছে
+    if (user.verified) {
+      await updateUser(userId, { verified: false });
+    }
+
     const channelButtons = REQUIRED_CHANNELS.map(channel => {
       const cleanId = channel.startsWith('-100') ? channel : channel.replace('@', '');
       const link = channel.startsWith('-100') 
@@ -163,7 +166,12 @@ bot.action('verify_join', async (ctx) => {
       ctx.from.last_name
     );
     if (user.verified) {
-      return ctx.reply('✅ আপনি ইতিমধ্যে যাচাইকৃত!');
+      return ctx.reply(
+        '✅ আপনি ইতিমধ্যে যাচাইকৃত!',
+        Markup.inlineKeyboard([
+          Markup.button.webApp('🚀 Open App', MINI_APP_URL)
+        ])
+      );
     }
     const allJoined = await checkAllChannels(ctx);
     if (allJoined) {
@@ -206,7 +214,15 @@ bot.on('video', async (ctx) => {
   const userId = ctx.from.id;
   const video = ctx.message.video;
   const fileId = video.file_id;
-  
+
+  if (broadcastData[userId] && broadcastData[userId].step === 'content') {
+    broadcastData[userId].type = 'video';
+    broadcastData[userId].file = fileId;
+    broadcastData[userId].step = 'message';
+    await ctx.reply('📝 এবার ব্রডকাস্টের ক্যাপশন/মেসেজ লিখুন (রেফার লিংক সহ):');
+    return;
+  }
+
   try {
     const storedFileId = await forwardVideoToStorageChannel(ctx, fileId);
     
@@ -400,8 +416,15 @@ bot.command('broadcast', async (ctx) => {
       return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
     }
 
-    broadcastData[ctx.from.id] = { step: 'image' };
-    await ctx.reply('🖼️ ব্রডকাস্টের সাথে একটি ছবি পাঠাতে চাইলে এখন পাঠান।\nছবি ছাড়া শুধু টেক্সট পাঠাতে চাইলে "skip" লিখুন।');
+    broadcastData[ctx.from.id] = { step: 'content' };
+    await ctx.reply(
+      '📢 কী পাঠাতে চান, নিচের যেকোনো একটি করুন:\n\n' +
+      '🖼️ ছবি পাঠান\n' +
+      '🎬 ভিডিও পাঠান\n' +
+      '🎞️ GIF পাঠান\n' +
+      '📊 পোল বানাতে "poll" লিখুন\n' +
+      '✏️ শুধু টেক্সট পাঠাতে "skip" লিখুন'
+    );
   } catch (error) {
     console.error('❌ Error in /broadcast:', error);
     await ctx.reply('❌ ব্রডকাস্ট শুরু করতে সমস্যা: ' + error.message);
@@ -422,8 +445,17 @@ async function runBroadcast(ctx, data) {
     let success = 0, failed = 0;
     for (const user of users) {
       try {
-        if (data.image) {
-          await bot.telegram.sendPhoto(user.userId, data.image, { caption: data.message });
+        if (data.type === 'photo') {
+          await bot.telegram.sendPhoto(user.userId, data.file, { caption: data.message || '' });
+        } else if (data.type === 'video') {
+          await bot.telegram.sendVideo(user.userId, data.file, { caption: data.message || '' });
+        } else if (data.type === 'animation') {
+          await bot.telegram.sendAnimation(user.userId, data.file, { caption: data.message || '' });
+        } else if (data.type === 'poll') {
+          await bot.telegram.sendPoll(user.userId, data.question, data.options, {
+            is_anonymous: true,
+            allows_multiple_answers: false
+          });
         } else {
           await bot.telegram.sendMessage(user.userId, data.message);
         }
@@ -516,15 +548,46 @@ bot.on('text', async (ctx) => {
 
   if (broadcastData[userId]) {
     const data = broadcastData[userId];
-    if (data.step === 'image') {
-      if (text.toLowerCase() === 'skip') {
+
+    if (data.step === 'content') {
+      const choice = text.toLowerCase();
+      if (choice === 'skip') {
+        data.type = 'text';
         data.step = 'message';
         await ctx.reply('📝 ব্রডকাস্টের মেসেজ লিখুন (রেফার লিংক সহ):');
+      } else if (choice === 'poll') {
+        data.type = 'poll';
+        data.step = 'poll_question';
+        await ctx.reply('❓ পোলের প্রশ্নটি লিখুন:');
       } else {
-        await ctx.reply('🖼️ ছবি পাঠান, অথবা ছবি ছাড়া এগোতে "skip" লিখুন।');
+        await ctx.reply('⚠️ ছবি/ভিডিও/GIF পাঠান, "poll" লিখুন, অথবা "skip" লিখে শুধু টেক্সট পাঠান।');
       }
       return;
     }
+
+    if (data.step === 'poll_question') {
+      data.question = text;
+      data.step = 'poll_options';
+      await ctx.reply('📊 অপশনগুলো কমা (,) দিয়ে আলাদা করে লিখুন (কমপক্ষে ২টি, সর্বোচ্চ ১০টি):\nউদাহরণ: হ্যাঁ, না, জানি না');
+      return;
+    }
+
+    if (data.step === 'poll_options') {
+      const options = text.split(',').map(o => o.trim()).filter(o => o.length > 0);
+      if (options.length < 2) {
+        await ctx.reply('⚠️ কমপক্ষে ২টি অপশন দিন, কমা (,) দিয়ে আলাদা করে।');
+        return;
+      }
+      if (options.length > 10) {
+        await ctx.reply('⚠️ সর্বোচ্চ ১০টি অপশন দেওয়া যাবে।');
+        return;
+      }
+      data.options = options;
+      await runBroadcast(ctx, data);
+      delete broadcastData[userId];
+      return;
+    }
+
     if (data.step === 'message') {
       data.message = text;
       await runBroadcast(ctx, data);
@@ -575,15 +638,26 @@ bot.on('text', async (ctx) => {
   }
 });
 
+bot.on('animation', async (ctx) => {
+  const userId = ctx.from.id;
+  if (broadcastData[userId] && broadcastData[userId].step === 'content') {
+    broadcastData[userId].type = 'animation';
+    broadcastData[userId].file = ctx.message.animation.file_id;
+    broadcastData[userId].step = 'message';
+    await ctx.reply('📝 এবার ব্রডকাস্টের ক্যাপশন/মেসেজ লিখুন (রেফার লিংক সহ):');
+  }
+});
+
 bot.on('photo', async (ctx) => {
   const userId = ctx.from.id;
   const photo = ctx.message.photo;
   const fileId = photo[photo.length - 1].file_id;
 
-  if (broadcastData[userId] && broadcastData[userId].step === 'image') {
-    broadcastData[userId].image = fileId;
+  if (broadcastData[userId] && broadcastData[userId].step === 'content') {
+    broadcastData[userId].type = 'photo';
+    broadcastData[userId].file = fileId;
     broadcastData[userId].step = 'message';
-    await ctx.reply('📝 এবার ব্রডকাস্টের মেসেজ লিখুন (রেফার লিংক সহ):');
+    await ctx.reply('📝 এবার ব্রডকাস্টের ক্যাপশন/মেসেজ লিখুন (রেফার লিংক সহ):');
     return;
   }
 
