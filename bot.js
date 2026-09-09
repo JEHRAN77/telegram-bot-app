@@ -199,10 +199,7 @@ bot.command('addvideo', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) {
     return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
   }
-  // নতুন /addvideo শুরু হলে আগের অসম্পূর্ণ flow/state পরিষ্কার করি
   delete updateAdsData[ctx.from.id];
-  delete addTopicData[ctx.from.id];
-  delete broadcastData[ctx.from.id];
   addVideoData[ctx.from.id] = { step: 'video' };
   await ctx.reply('📹 ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)');
 });
@@ -211,10 +208,7 @@ bot.command('addtopic', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) {
     return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
   }
-  // নতুন /addtopic শুরু হলে আগের অসম্পূর্ণ flow/state পরিষ্কার করি
   delete updateAdsData[ctx.from.id];
-  delete addVideoData[ctx.from.id];
-  delete broadcastData[ctx.from.id];
   addTopicData[ctx.from.id] = { step: 'video', videos: [] };
   await ctx.reply('📹 প্রথম ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)');
 });
@@ -313,10 +307,6 @@ bot.command('ads', async (ctx) => {
       return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
     }
 
-    // /ads শুরু হলে addvideo/addtopic/broadcast-এর পুরোনো state বন্ধ করি
-    delete addVideoData[ctx.from.id];
-    delete addTopicData[ctx.from.id];
-    delete broadcastData[ctx.from.id];
     updateAdsData[ctx.from.id] = { step: 'topicId' };
     await ctx.reply(
       '🎬 কোন ভিডিও/টপিকের Ads count পরিবর্তন করতে চান?\n\n' +
@@ -326,6 +316,71 @@ bot.command('ads', async (ctx) => {
   } catch (error) {
     console.error('❌ Error starting /ads:', error);
     await ctx.reply('❌ /ads শুরু করতে সমস্যা হয়েছে: ' + error.message);
+  }
+});
+
+
+async function moveTopic(topicId, direction) {
+  const topicsSnapshot = await db.collection('topics').get();
+  if (topicsSnapshot.empty) throw new Error('NO_TOPICS');
+
+  const topics = topicsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  topics.sort((a, b) => {
+    const orderA = Number.isFinite(Number(a.sortOrder)) ? Number(a.sortOrder) : new Date(a.createdAt || 0).getTime();
+    const orderB = Number.isFinite(Number(b.sortOrder)) ? Number(b.sortOrder) : new Date(b.createdAt || 0).getTime();
+    return orderB - orderA;
+  });
+
+  const index = topics.findIndex(t => t.id === topicId);
+  if (index === -1) throw new Error('NOT_FOUND');
+
+  const targetIndex = direction === 'up' ? index - 1 : index + 1;
+  if (targetIndex < 0 || targetIndex >= topics.length) return { edge: true, topic: topics[index] };
+
+  // Rebuild stable ordering for all topics. This also upgrades old topics that have no sortOrder.
+  const reordered = topics.slice();
+  const temp = reordered[index];
+  reordered[index] = reordered[targetIndex];
+  reordered[targetIndex] = temp;
+
+  const batch = db.batch();
+  reordered.forEach((topic, i) => {
+    batch.update(db.collection('topics').doc(topic.id), { sortOrder: reordered.length - i });
+  });
+  await batch.commit();
+
+  return { edge: false, topic: reordered[targetIndex], swappedWith: reordered[index] };
+}
+
+bot.command('up', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+  const args = ctx.message.text.trim().split(/\s+/);
+  const topicId = args[1];
+  if (!topicId) return ctx.reply('⬆️ ব্যবহার: /up VIDEO_ID\n\nউদাহরণ: /up abc123');
+  try {
+    const result = await moveTopic(topicId, 'up');
+    if (result.edge) return ctx.reply('⬆️ এই ভিডিওটি ইতোমধ্যে সবার উপরে আছে।');
+    await ctx.reply(`✅ ভিডিওটি ১ ধাপ উপরে নেওয়া হয়েছে।\n\n📌 ${result.topic.title || 'নামবিহীন টপিক'}\n🆔 <code>${topicId}</code>`, { parse_mode: 'HTML' });
+  } catch (error) {
+    if (error.message === 'NOT_FOUND') return ctx.reply('❌ এই Video/Topic ID পাওয়া যায়নি।');
+    console.error('❌ /up error:', error);
+    return ctx.reply('❌ ভিডিও উপরে নিতে সমস্যা হয়েছে।');
+  }
+});
+
+bot.command('down', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+  const args = ctx.message.text.trim().split(/\s+/);
+  const topicId = args[1];
+  if (!topicId) return ctx.reply('⬇️ ব্যবহার: /down VIDEO_ID\n\nউদাহরণ: /down abc123');
+  try {
+    const result = await moveTopic(topicId, 'down');
+    if (result.edge) return ctx.reply('⬇️ এই ভিডিওটি ইতোমধ্যে সবার নিচে আছে।');
+    await ctx.reply(`✅ ভিডিওটি ১ ধাপ নিচে নেওয়া হয়েছে।\n\n📌 ${result.topic.title || 'নামবিহীন টপিক'}\n🆔 <code>${topicId}</code>`, { parse_mode: 'HTML' });
+  } catch (error) {
+    if (error.message === 'NOT_FOUND') return ctx.reply('❌ এই Video/Topic ID পাওয়া যায়নি।');
+    console.error('❌ /down error:', error);
+    return ctx.reply('❌ ভিডিও নিচে নিতে সমস্যা হয়েছে।');
   }
 });
 
@@ -350,6 +405,7 @@ bot.command('list', async (ctx) => {
       message += `📌 ${data.title || 'নামবিহীন'}\n`;
       message += `   🆔 <code>${doc.id}</code>\n`;
       message += `   📹 ${data.videoCount || 0}টি ভিডিও\n`;
+      message += `   👁️ ${Number(data.unlockCount || data.unlocks || data.views) || 0} ভিউ\n`;
       message += `   🔢 ${data.adsRequired || 0}টি অ্যাড\n\n`;
     });
     await ctx.reply(message, { parse_mode: 'HTML' });
@@ -387,32 +443,59 @@ bot.command('admin', async (ctx) => {
 bot.command('stats', async (ctx) => {
   try {
     console.log('📊 /stats command by:', ctx.from.id);
-    
+
     if (ctx.from.id !== ADMIN_ID) {
       return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
     }
 
     await ctx.reply('⏳ পরিসংখ্যান লোড হচ্ছে...');
 
-    const snapshot = await db.collection('users')
-      .where('verified', '==', true)
-      .orderBy('verifiedAt', 'desc')
-      .limit(10)
-      .get();
+    const userSnapshot = await db.collection('users').get();
+    const users = userSnapshot.docs.map(doc => doc.data());
+    const verifiedUsers = users.filter(u => u.verified === true);
 
-    if (snapshot.empty) {
-      return ctx.reply('📊 এখনো কোনো যাচাইকৃত ইউজার নেই।');
+    const topicSnapshot = await db.collection('topics').get();
+
+    const topics = topicSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    topics.sort((a, b) => {
+      const viewsA = Number(a.unlockCount || a.unlocks || a.views) || 0;
+      const viewsB = Number(b.unlockCount || b.unlocks || b.views) || 0;
+      const timeA = new Date(a.createdAt || 0).getTime() || 0;
+      const timeB = new Date(b.createdAt || 0).getTime() || 0;
+      return viewsB - viewsA || timeB - timeA;
+    });
+
+    const totalViews = topics.reduce((sum, topic) => {
+      return sum + (Number(topic.unlockCount || topic.unlocks || topic.views) || 0);
+    }, 0);
+
+    let message =
+      `📊 স্ট্যাটিসটিক্স\n\n` +
+      `👥 মোট ইউজার: ${users.length} জন\n` +
+      `✅ যাচাইকৃত ইউজার: ${verifiedUsers.length} জন\n` +
+      `📁 মোট ভিডিও/টপিক: ${topics.length}টি\n` +
+      `👁️ মোট ভিউ: ${totalViews}\n\n` +
+      `🏆 ভিডিও অনুযায়ী ভিউ:\n\n`;
+
+    if (topics.length === 0) {
+      message += '📭 এখনো কোনো ভিডিও/টপিক নেই।';
+    } else {
+      topics.slice(0, 30).forEach((topic, index) => {
+        const views = Number(topic.unlockCount || topic.unlocks || topic.views) || 0;
+        const title = String(topic.title || 'নামবিহীন').replace(/\n/g, ' ').slice(0, 70);
+        message += `${index + 1}. ${title}\n`;
+        message += `   👁️ ${views} ভিউ\n`;
+        message += `   🆔 <code>${topic.id}</code>\n\n`;
+      });
+      if (topics.length > 30) {
+        message += `আরও ${topics.length - 30}টি ভিডিও আছে।`;
+      }
     }
 
-    let message = '📊 সর্বশেষ যাচাইকৃত ইউজার:\n\n';
-    snapshot.docs.forEach((doc, index) => {
-      const data = doc.data();
-      message += `${index + 1}. ${data.firstName} ${data.lastName || ''}\n`;
-    });
-    await ctx.reply(message);
+    await ctx.reply(message, { parse_mode: 'HTML' });
   } catch (error) {
     console.error('❌ Error in /stats:', error);
-    await ctx.reply('❌ পরিসংখ্যান লোড করতে সমস্যা: ' + error.message);
+    await ctx.reply('❌ পরিসংখ্যান দেখাতে সমস্যা হয়েছে: ' + error.message);
   }
 });
 
@@ -796,6 +879,8 @@ async function saveTopic(ctx, data) {
       adsRequired: data.adsRequired,
       type: 'multi',
       videoCount: data.videos.length,
+      unlockCount: 0,
+      sortOrder: Date.now(),
       createdAt: new Date().toISOString()
     });
     await ctx.reply(`✅ টপিক "${data.title}" তৈরি হয়েছে!\n📹 ভিডিও সংখ্যা: ${data.videos.length}\n🔢 অ্যাড প্রয়োজন: ${data.adsRequired}\n🆔 টপিক আইডি: <code>${topicRef.id}</code>`, { parse_mode: 'HTML' });
@@ -815,6 +900,8 @@ async function saveVideo(ctx, data) {
       adsRequired: data.adsRequired,
       type: 'single',
       videoCount: 1,
+      unlockCount: 0,
+      sortOrder: Date.now(),
       createdAt: new Date().toISOString()
     });
     await ctx.reply(`✅ ভিডিও "${data.title}" যোগ হয়েছে!\n🆔 টপিক আইডি: <code>${topicRef.id}</code>`, { parse_mode: 'HTML' });
@@ -852,6 +939,12 @@ app.get('/api/topics', async (req, res) => {
     const topics = [];
     snapshot.docs.forEach(doc => {
       topics.push({ id: doc.id, ...doc.data() });
+    });
+    // Manual order first; old topics fall back to upload time.
+    topics.sort((a, b) => {
+      const orderA = Number.isFinite(Number(a.sortOrder)) ? Number(a.sortOrder) : new Date(a.createdAt || 0).getTime();
+      const orderB = Number.isFinite(Number(b.sortOrder)) ? Number(b.sortOrder) : new Date(b.createdAt || 0).getTime();
+      return orderB - orderA;
     });
     res.json(topics);
   } catch (error) {
@@ -908,9 +1001,17 @@ async function deliverUnlockedTopic(userId, topicId) {
   const topicDoc = await topicRef.get();
   if (!topicDoc.exists) throw new Error('Topic not found');
 
-  if (!unlockedTopics.includes(topicId)) {
+  const firstUnlock = !unlockedTopics.includes(topicId);
+  if (firstUnlock) {
     unlockedTopics.push(topicId);
     topicUnlockTime[topicId] = now;
+
+    // Keep a simple popularity counter for the Mini App categories.
+    try {
+      await topicRef.set({ unlockCount: admin.firestore.FieldValue.increment(1) }, { merge: true });
+    } catch (countError) {
+      console.error('❌ Could not update unlock count:', countError.message);
+    }
   }
 
   const videos = topicDoc.data().videos || [];
