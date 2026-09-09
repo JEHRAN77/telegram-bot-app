@@ -499,6 +499,53 @@ bot.command('stats', async (ctx) => {
   }
 });
 
+bot.command('user', async (ctx) => {
+  try {
+    console.log('👥 /user command by:', ctx.from.id);
+
+    if (ctx.from.id !== ADMIN_ID) {
+      return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+    }
+
+    await ctx.reply('⏳ ইউজার তালিকা লোড হচ্ছে...');
+
+    const snapshot = await db.collection('users').get();
+    if (snapshot.empty) {
+      return ctx.reply('📭 এখনো কোনো ইউজার পাওয়া যায়নি।');
+    }
+
+    const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    users.sort((a, b) => {
+      const timeA = new Date(a.createdAt || 0).getTime() || 0;
+      const timeB = new Date(b.createdAt || 0).getTime() || 0;
+      return timeB - timeA;
+    });
+
+    const totalPages = Math.ceil(users.length / 25);
+    for (let page = 0; page < totalPages; page++) {
+      const pageUsers = users.slice(page * 25, (page + 1) * 25);
+      let message = `👥 ইউজার তালিকা (${page + 1}/${totalPages})\n\n`;
+
+      pageUsers.forEach((user, index) => {
+        const number = page * 25 + index + 1;
+        const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+        const displayName = fullName || 'নাম পাওয়া যায়নি';
+        const username = user.username ? `@${String(user.username).replace(/^@/, '')}` : 'Username নেই';
+        const status = user.verified === true ? '✅' : '❌';
+
+        message += `${number}. ${displayName}\n`;
+        message += `   👤 ${username}\n`;
+        message += `   🆔 <code>${user.userId || user.id}</code> ${status}\n\n`;
+      });
+
+      await ctx.reply(message, { parse_mode: 'HTML' });
+    }
+  } catch (error) {
+    console.error('❌ Error in /user:', error);
+    await ctx.reply('❌ ইউজার তালিকা দেখাতে সমস্যা হয়েছে: ' + error.message);
+  }
+});
+
 bot.command('delete', async (ctx) => {
   try {
     console.log('🗑️ /delete command by:', ctx.from.id);
