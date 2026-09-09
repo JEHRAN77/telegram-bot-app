@@ -183,33 +183,50 @@
                 function unlocksOf(topic) {
                     return Number(topic && (topic.unlockCount || topic.unlocks || topic.views) || 0) || 0;
                 }
+                function recentUnlocksOf(topic) {
+                    var list = Array.isArray(topic && topic.recentUnlocks) ? topic.recentUnlocks : [];
+                    var cutoff = Date.now() - (7 * 86400000);
+                    return list.reduce(function(count, value) {
+                        var ts = typeof value === 'number' ? value : new Date(value).getTime();
+                        return count + (Number.isFinite(ts) && ts >= cutoff ? 1 : 0);
+                    }, 0);
+                }
+                function lastUnlockOf(topic) {
+                    var value = topic && topic.lastUnlockAt;
+                    var ts = typeof value === 'number' ? value : new Date(value || 0).getTime();
+                    return Number.isFinite(ts) ? ts : 0;
+                }
 
-                // Categories are real filters/sorts, not just visual buttons.
+                // প্রতিটি category আলাদা sorting rule ব্যবহার করে।
                 if (activeCategory === 'popular') {
+                    // 👑 জনপ্রিয় = সর্বকালের মোট unlock/view সবচেয়ে বেশি।
                     sortedTopics.sort(function(a, b) {
                         return unlocksOf(b) - unlocksOf(a) || timeOf(b) - timeOf(a);
                     });
                 } else if (activeCategory === 'trending') {
-                    var now = Date.now();
+                    // 🔥 ট্রেন্ডিং = গত ৭ দিনে যত unlock হয়েছে, তার উপর বেশি গুরুত্ব;
+                    // recent unlock না থাকলে lastUnlockAt + total views দিয়ে fallback score।
                     sortedTopics.sort(function(a, b) {
-                        var ageA = Math.max(0, (now - timeOf(a)) / 86400000);
-                        var ageB = Math.max(0, (now - timeOf(b)) / 86400000);
-                        var scoreA = unlocksOf(a) * 20 + Math.max(0, 30 - ageA);
-                        var scoreB = unlocksOf(b) * 20 + Math.max(0, 30 - ageB);
-                        return scoreB - scoreA || timeOf(b) - timeOf(a);
+                        var recentA = recentUnlocksOf(a);
+                        var recentB = recentUnlocksOf(b);
+                        var lastA = lastUnlockOf(a);
+                        var lastB = lastUnlockOf(b);
+                        var scoreA = recentA * 1000 + unlocksOf(a) + (lastA ? Math.min(100, Math.max(0, 7 - ((Date.now() - lastA) / 86400000))) : 0);
+                        var scoreB = recentB * 1000 + unlocksOf(b) + (lastB ? Math.min(100, Math.max(0, 7 - ((Date.now() - lastB) / 86400000))) : 0);
+                        return scoreB - scoreA || lastB - lastA || timeOf(b) - timeOf(a);
                     });
                 } else if (activeCategory === 'new') {
-                    // "নতুন": newest uploads first.
+                    // 🆕 নতুন = সর্বশেষ upload করা ভিডিও আগে।
                     sortedTopics.sort(function(a, b) {
                         return timeOf(b) - timeOf(a);
                     });
                     sortedTopics = sortedTopics.slice(0, 20);
                 } else {
-                    // "সব": follow the admin's manual order.
+                    // 📁 সব = admin-এর /up এবং /down manual order।
                     sortedTopics.sort(function(a, b) {
                         var orderA = Number.isFinite(Number(a.sortOrder)) ? Number(a.sortOrder) : timeOf(a);
                         var orderB = Number.isFinite(Number(b.sortOrder)) ? Number(b.sortOrder) : timeOf(b);
-                        return orderB - orderA;
+                        return orderB - orderA || timeOf(b) - timeOf(a);
                     });
                 }
 

@@ -1053,11 +1053,24 @@ async function deliverUnlockedTopic(userId, topicId) {
     unlockedTopics.push(topicId);
     topicUnlockTime[topicId] = now;
 
-    // Keep a simple popularity counter for the Mini App categories.
+    // Popularity + recent-trending data for the Mini App categories.
+    // Keep only the latest 100 unlock timestamps so the document stays small.
     try {
-      await topicRef.set({ unlockCount: admin.firestore.FieldValue.increment(1) }, { merge: true });
+      const currentTopicData = topicDoc.data() || {};
+      const existingRecent = Array.isArray(currentTopicData.recentUnlocks) ? currentTopicData.recentUnlocks : [];
+      const recentUnlocks = existingRecent
+        .map(value => typeof value === 'number' ? value : new Date(value).getTime())
+        .filter(value => Number.isFinite(value))
+        .slice(-99);
+      recentUnlocks.push(now);
+
+      await topicRef.set({
+        unlockCount: admin.firestore.FieldValue.increment(1),
+        lastUnlockAt: now,
+        recentUnlocks
+      }, { merge: true });
     } catch (countError) {
-      console.error('❌ Could not update unlock count:', countError.message);
+      console.error('❌ Could not update unlock/trending count:', countError.message);
     }
   }
 
