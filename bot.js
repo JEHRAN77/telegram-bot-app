@@ -22,6 +22,79 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
+// ==============================
+// ⚡ Performance / Firestore cache
+// ==============================
+const THIRTY_MINUTES = 30 * 60 * 1000;
+const TOPICS_CACHE_TTL = 120 * 1000; // 2 minutes; mutations invalidate immediately
+const FILE_LINK_CACHE_TTL = 45 * 60 * 1000;
+const DAILY_LIMIT_CACHE_TTL = 60 * 1000;
+const DEFAULT_DAILY_AD_LIMIT = 15;
+let topicsCache = null;
+let topicsCacheAt = 0;
+let topicsRefreshPromise = null;
+let fileLinkCache = new Map();
+let dailyLimitCache = DEFAULT_DAILY_AD_LIMIT;
+let dailyLimitCacheAt = 0;
+let cleanupRunning = false;
+let adminStatsCache = null;
+let adminStatsCacheAt = 0;
+let adminUserCursor = null;
+let adminUserPage = 0;
+
+function invalidateTopicsCache() {
+  topicsCache = null;
+  topicsCacheAt = 0;
+}
+
+function invalidateAdminStatsCache() {
+  adminStatsCache = null;
+  adminStatsCacheAt = 0;
+}
+
+async function getTopicsCached() {
+  const now = Date.now();
+  if (topicsCache && (now - topicsCacheAt) < TOPICS_CACHE_TTL) return topicsCache;
+  if (topicsRefreshPromise) return topicsRefreshPromise;
+  topicsRefreshPromise = (async () => {
+    const snapshot = await db.collection('topics').get();
+    const topics = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    topics.sort((a, b) => {
+      const orderA = Number.isFinite(Number(a.sortOrder)) ? Number(a.sortOrder) : new Date(a.createdAt || 0).getTime();
+      const orderB = Number.isFinite(Number(b.sortOrder)) ? Number(b.sortOrder) : new Date(b.createdAt || 0).getTime();
+      return orderB - orderA;
+    });
+    topicsCache = topics;
+    topicsCacheAt = Date.now();
+    return topics;
+  })().finally(() => { topicsRefreshPromise = null; });
+  return topicsRefreshPromise;
+}
+
+async function getDailyAdLimit() {
+  const now = Date.now();
+  if ((now - dailyLimitCacheAt) < DAILY_LIMIT_CACHE_TTL) return dailyLimitCache;
+  try {
+    const doc = await db.collection('system').doc('settings').get();
+    const value = doc.exists ? Number(doc.data().dailyAdLimit) : DEFAULT_DAILY_AD_LIMIT;
+    dailyLimitCache = Number.isInteger(value) && value > 0 ? value : DEFAULT_DAILY_AD_LIMIT;
+    dailyLimitCacheAt = now;
+  } catch (e) {
+    console.error('❌ Daily limit read error:', e.message);
+  }
+  return dailyLimitCache;
+}
+
+function invalidateDailyLimitCache() { dailyLimitCacheAt = 0; }
+
+function getCleanupDueAt(sentMessages) {
+  const times = (Array.isArray(sentMessages) ? sentMessages : [])
+    .map(m => Number(m && m.sentAt) || 0)
+    .filter(Boolean)
+    .map(sentAt => sentAt + THIRTY_MINUTES);
+  return times.length ? Math.min(...times) : null;
+}
+
 console.log('✅ Firebase Connected');
 
 const REQUIRED_CHANNELS = process.env.REQUIRED_CHANNELS.split(',').map(id => id.trim());
@@ -33,6 +106,8 @@ let addTopicData = {};
 let addVideoData = {};
 let broadcastData = {};
 let updateAdsData = {};
+let renameData = {};
+let thumbnailData = {};
 
 async function getOrCreateUser(userId, username, firstName, lastName) {
   try {
@@ -49,9 +124,13 @@ async function getOrCreateUser(userId, username, firstName, lastName) {
         createdAt: new Date().toISOString(),
         unlockedTopics: [],
         topicUnlockTime: {},
-        sentMessages: []
+        sentMessages: [],
+        cleanupDueAt: null,
+        dailyAdDate: null,
+        dailyAdsUsed: 0
       });
-      return { userId, username, firstName, lastName, verified: false, unlockedTopics: [], topicUnlockTime: {}, sentMessages: [] };
+      invalidateAdminStatsCache();
+      return { userId, username, firstName, lastName, verified: false, unlockedTopics: [], topicUnlockTime: {}, sentMessages: [], cleanupDueAt: null };
     }
     return { id: doc.id, ...doc.data() };
   } catch (error) {
@@ -64,6 +143,7 @@ async function updateUser(userId, updates) {
   try {
     const userRef = db.collection('users').doc(userId.toString());
     await userRef.update(updates);
+    if (Object.prototype.hasOwnProperty.call(updates, 'verified')) invalidateAdminStatsCache();
   } catch (error) {
     console.error('Error in updateUser:', error);
   }
@@ -301,6 +381,34 @@ bot.command('done', async (ctx) => {
 // ✅ অ্যাডমিন কমান্ড
 // =============================================
 
+bot.command('rename', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+  renameData[ctx.from.id] = { step: 'id' };
+  await ctx.reply('✏️ Video/Topic ID পাঠান:');
+});
+
+bot.command('thumbnail', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+  thumbnailData[ctx.from.id] = { step: 'id' };
+  await ctx.reply('🖼️ Video/Topic ID পাঠান:');
+});
+
+bot.command('limit', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+  const args = ctx.message.text.trim().split(/\s+/);
+  if (args[1]) {
+    const value = Number(args[1]);
+    if (!Number.isInteger(value) || value < 1 || value > 1000) return ctx.reply('❌ Limit 1-1000 এর মধ্যে হতে হবে।');
+    await db.collection('system').doc('settings').set({ dailyAdLimit: value }, { merge: true });
+    dailyLimitCache = value; invalidateDailyLimitCache(); dailyLimitCacheAt = Date.now();
+    return ctx.reply(`✅ Daily Ad Limit এখন ${value}টি।`);
+  }
+  const current = await getDailyAdLimit();
+  delete renameData[ctx.from.id];
+  await ctx.reply(`📊 বর্তমান Daily Ad Limit: ${current}টি\n\nনতুন limit লিখুন। উদাহরণ: 20`);
+  updateAdsData[ctx.from.id] = { step: 'dailyLimit' };
+});
+
 bot.command('ads', async (ctx) => {
   try {
     if (ctx.from.id !== ADMIN_ID) {
@@ -321,35 +429,34 @@ bot.command('ads', async (ctx) => {
 
 
 async function moveTopic(topicId, direction) {
-  const topicsSnapshot = await db.collection('topics').get();
-  if (topicsSnapshot.empty) throw new Error('NO_TOPICS');
-
-  const topics = topicsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-  topics.sort((a, b) => {
-    const orderA = Number.isFinite(Number(a.sortOrder)) ? Number(a.sortOrder) : new Date(a.createdAt || 0).getTime();
-    const orderB = Number.isFinite(Number(b.sortOrder)) ? Number(b.sortOrder) : new Date(b.createdAt || 0).getTime();
-    return orderB - orderA;
-  });
-
+  const topics = await getTopicsCached();
+  if (!topics.length) throw new Error('NO_TOPICS');
   const index = topics.findIndex(t => t.id === topicId);
   if (index === -1) throw new Error('NOT_FOUND');
-
   const targetIndex = direction === 'up' ? index - 1 : index + 1;
   if (targetIndex < 0 || targetIndex >= topics.length) return { edge: true, topic: topics[index] };
 
-  // Rebuild stable ordering for all topics. This also upgrades old topics that have no sortOrder.
-  const reordered = topics.slice();
-  const temp = reordered[index];
-  reordered[index] = reordered[targetIndex];
-  reordered[targetIndex] = temp;
+  const a = topics[index];
+  const b = topics[targetIndex];
+  const aOrder = Number(a.sortOrder);
+  const bOrder = Number(b.sortOrder);
 
-  const batch = db.batch();
-  reordered.forEach((topic, i) => {
-    batch.update(db.collection('topics').doc(topic.id), { sortOrder: reordered.length - i });
-  });
-  await batch.commit();
-
-  return { edge: false, topic: reordered[targetIndex], swappedWith: reordered[index] };
+  // Normal case: only two documents are written.
+  if (Number.isFinite(aOrder) && Number.isFinite(bOrder) && aOrder !== bOrder) {
+    const batch = db.batch();
+    batch.update(db.collection('topics').doc(a.id), { sortOrder: bOrder });
+    batch.update(db.collection('topics').doc(b.id), { sortOrder: aOrder });
+    await batch.commit();
+  } else {
+    // One-time normalization for old/missing/duplicate sortOrder values.
+    const reordered = topics.slice();
+    [reordered[index], reordered[targetIndex]] = [reordered[targetIndex], reordered[index]];
+    const batch = db.batch();
+    reordered.forEach((topic, i) => batch.update(db.collection('topics').doc(topic.id), { sortOrder: reordered.length - i }));
+    await batch.commit();
+  }
+  invalidateTopicsCache();
+  return { edge: false, topic: b, swappedWith: a };
 }
 
 bot.command('up', async (ctx) => {
@@ -394,14 +501,14 @@ bot.command('list', async (ctx) => {
 
     await ctx.reply('⏳ তালিকা তৈরি হচ্ছে...');
 
-    const snapshot = await db.collection('topics').get();
-    if (snapshot.empty) {
+    const topics = await getTopicsCached();
+    if (!topics.length) {
       return ctx.reply('📭 এখনো কোনো টপিক যোগ করা হয়নি।');
     }
 
     let message = '📋 সব টপিক:\n\n';
-    snapshot.docs.forEach((doc) => {
-      const data = doc.data();
+    topics.forEach((data) => {
+      const doc = { id: data.id };
       message += `📌 ${data.title || 'নামবিহীন'}\n`;
       message += `   🆔 <code>${doc.id}</code>\n`;
       message += `   📹 ${data.videoCount || 0}টি ভিডিও\n`;
@@ -415,6 +522,23 @@ bot.command('list', async (ctx) => {
   }
 });
 
+async function getUserCountsCached() {
+  const now = Date.now();
+  if (adminStatsCache && (now - adminStatsCacheAt) < 60 * 1000) return adminStatsCache;
+  try {
+    const [totalSnap, verifiedSnap] = await Promise.all([
+      db.collection('users').count().get(),
+      db.collection('users').where('verified', '==', true).count().get()
+    ]);
+    adminStatsCache = { totalUsers: totalSnap.data().count || 0, verifiedUsers: verifiedSnap.data().count || 0 };
+  } catch (e) {
+    const snap = await db.collection('users').get();
+    adminStatsCache = { totalUsers: snap.size, verifiedUsers: snap.docs.reduce((n, d) => n + (d.data().verified === true ? 1 : 0), 0) };
+  }
+  adminStatsCacheAt = now;
+  return adminStatsCache;
+}
+
 bot.command('admin', async (ctx) => {
   try {
     console.log('📊 /admin command by:', ctx.from.id);
@@ -425,14 +549,11 @@ bot.command('admin', async (ctx) => {
 
     await ctx.reply('⏳ অ্যাডমিন প্যানেল লোড হচ্ছে...');
 
-    const snapshot = await db.collection('users').get();
-    const users = snapshot.docs.map(doc => doc.data());
-    const verifiedUsers = users.filter(u => u.verified === true);
-
+    const counts = await getUserCountsCached();
     await ctx.reply(
       `📊 অ্যাডমিন প্যানেল\n\n` +
-      `✅ যাচাইকৃত: ${verifiedUsers.length}\n` +
-      `👥 মোট ইউজার: ${users.length}`
+      `✅ যাচাইকৃত: ${counts.verifiedUsers}\n` +
+      `👥 মোট ইউজার: ${counts.totalUsers}`
     );
   } catch (error) {
     console.error('❌ Error in /admin:', error);
@@ -450,13 +571,8 @@ bot.command('stats', async (ctx) => {
 
     await ctx.reply('⏳ পরিসংখ্যান লোড হচ্ছে...');
 
-    const userSnapshot = await db.collection('users').get();
-    const users = userSnapshot.docs.map(doc => doc.data());
-    const verifiedUsers = users.filter(u => u.verified === true);
-
-    const topicSnapshot = await db.collection('topics').get();
-
-    const topics = topicSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const counts = await getUserCountsCached();
+    const topics = await getTopicsCached();
     topics.sort((a, b) => {
       const viewsA = Number(a.unlockCount || a.unlocks || a.views) || 0;
       const viewsB = Number(b.unlockCount || b.unlocks || b.views) || 0;
@@ -471,8 +587,8 @@ bot.command('stats', async (ctx) => {
 
     let message =
       `📊 স্ট্যাটিসটিক্স\n\n` +
-      `👥 মোট ইউজার: ${users.length} জন\n` +
-      `✅ যাচাইকৃত ইউজার: ${verifiedUsers.length} জন\n` +
+      `👥 মোট ইউজার: ${counts.totalUsers} জন\n` +
+      `✅ যাচাইকৃত ইউজার: ${counts.verifiedUsers} জন\n` +
       `📁 মোট ভিডিও/টপিক: ${topics.length}টি\n` +
       `👁️ মোট ভিউ: ${totalViews}\n\n` +
       `🏆 ভিডিও অনুযায়ী ভিউ:\n\n`;
@@ -501,49 +617,42 @@ bot.command('stats', async (ctx) => {
 
 bot.command('user', async (ctx) => {
   try {
-    console.log('👥 /user command by:', ctx.from.id);
-
-    if (ctx.from.id !== ADMIN_ID) {
-      return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
-    }
-
-    await ctx.reply('⏳ ইউজার তালিকা লোড হচ্ছে...');
-
-    const snapshot = await db.collection('users').get();
-    if (snapshot.empty) {
-      return ctx.reply('📭 এখনো কোনো ইউজার পাওয়া যায়নি।');
-    }
-
-    const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    users.sort((a, b) => {
-      const timeA = new Date(a.createdAt || 0).getTime() || 0;
-      const timeB = new Date(b.createdAt || 0).getTime() || 0;
-      return timeB - timeA;
-    });
-
-    const totalPages = Math.ceil(users.length / 25);
-    for (let page = 0; page < totalPages; page++) {
-      const pageUsers = users.slice(page * 25, (page + 1) * 25);
-      let message = `👥 ইউজার তালিকা (${page + 1}/${totalPages})\n\n`;
-
-      pageUsers.forEach((user, index) => {
-        const number = page * 25 + index + 1;
-        const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
-        const displayName = fullName || 'নাম পাওয়া যায়নি';
-        const username = user.username ? `@${String(user.username).replace(/^@/, '')}` : 'Username নেই';
-        const status = user.verified === true ? '✅' : '❌';
-
-        message += `${number}. ${displayName}\n`;
-        message += `   👤 ${username}\n`;
-        message += `   🆔 <code>${user.userId || user.id}</code> ${status}\n\n`;
-      });
-
-      await ctx.reply(message, { parse_mode: 'HTML' });
-    }
+    if (ctx.from.id !== ADMIN_ID) return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+    adminUserCursor = null;
+    adminUserPage = 1;
+    const snap = await db.collection('users').orderBy('createdAt', 'desc').limit(25).get();
+    if (snap.empty) return ctx.reply('📭 এখনো কোনো ইউজার পাওয়া যায়নি।');
+    adminUserCursor = snap.docs[snap.docs.length - 1];
+    await sendUserPage(ctx, snap.docs, adminUserPage);
   } catch (error) {
     console.error('❌ Error in /user:', error);
     await ctx.reply('❌ ইউজার তালিকা দেখাতে সমস্যা হয়েছে: ' + error.message);
   }
+});
+
+async function sendUserPage(ctx, docs, page) {
+  let message = `👥 ইউজার তালিকা (${page})\n\n`;
+  docs.forEach((doc, index) => {
+    const user = doc.data();
+    const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+    const displayName = fullName || 'নাম পাওয়া যায়নি';
+    const username = user.username ? `@${String(user.username).replace(/^@/, '')}` : 'Username নেই';
+    const status = user.verified === true ? '✅' : '❌';
+    message += `${(page - 1) * 25 + index + 1}. ${displayName}\n`;
+    message += `   👤 ${username}\n   🆔 <code>${user.userId || doc.id}</code> ${status}\n\n`;
+  });
+  const buttons = adminUserCursor ? Markup.inlineKeyboard([[Markup.button.callback('➡️ পরের ২৫ জন', 'admin_users_next')]]) : undefined;
+  await ctx.reply(message, { parse_mode: 'HTML', ...(buttons ? { reply_markup: buttons.reply_markup } : {}) });
+}
+
+bot.action('admin_users_next', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID || !adminUserCursor) return ctx.answerCbQuery('❌ অনুমতি নেই');
+  await ctx.answerCbQuery();
+  const snap = await db.collection('users').orderBy('createdAt', 'desc').startAfter(adminUserCursor).limit(25).get();
+  if (snap.empty) { adminUserCursor = null; return ctx.reply('📭 আর কোনো ইউজার নেই।'); }
+  adminUserCursor = snap.docs[snap.docs.length - 1];
+  adminUserPage += 1;
+  await sendUserPage(ctx, snap.docs, adminUserPage);
 });
 
 bot.command('delete', async (ctx) => {
@@ -562,6 +671,7 @@ bot.command('delete', async (ctx) => {
     await ctx.reply(`⏳ টপিক ${args[1]} ডিলিট করা হচ্ছে...`);
 
     await db.collection('topics').doc(args[1]).delete();
+    invalidateTopicsCache();
     await ctx.reply(`✅ টপিক ${args[1]} ডিলিট করা হয়েছে।`);
   } catch (error) {
     console.error('❌ Error in /delete:', error);
@@ -641,67 +751,62 @@ async function runBroadcast(ctx, data) {
 // =============================================
 
 bot.command('checkdb', async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) {
-    return ctx.reply('⛔ শুধুমাত্র অ্যাডমিনের জন্য।');
-  }
-
+  if (ctx.from.id !== ADMIN_ID) return ctx.reply('⛔ শুধুমাত্র অ্যাডমিনের জন্য।');
   try {
-    const topics = await db.collection('topics').get();
-    const users = await db.collection('users').get();
-    await ctx.reply(
-      `📊 ডেটাবেস রিপোর্ট:\n\n` +
-      `📁 টপিক: ${topics.size}টি\n` +
-      `👥 ইউজার: ${users.size}টি`
-    );
-  } catch (error) {
-    await ctx.reply('❌ ডেটাবেস চেক করতে সমস্যা: ' + error.message);
-  }
+    const [topics, users] = await Promise.all([getTopicsCached(), getUserCountsCached()]);
+    await ctx.reply(`📊 ডেটাবেস রিপোর্ট:\n\n📁 টপিক: ${topics.length}টি\n👥 ইউজার: ${users.totalUsers}টি`);
+  } catch (error) { await ctx.reply('❌ ডেটাবেস চেক করতে সমস্যা: ' + error.message); }
 });
 
 bot.command('testdb', async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) {
-    return ctx.reply('⛔ শুধুমাত্র অ্যাডমিনের জন্য।');
-  }
-  
+  if (ctx.from.id !== ADMIN_ID) return ctx.reply('⛔ শুধুমাত্র অ্যাডমিনের জন্য।');
   try {
-    const usersSnapshot = await db.collection('users').get();
-    const userCount = usersSnapshot.size;
-    
-    const topicsSnapshot = await db.collection('topics').get();
-    const topicCount = topicsSnapshot.size;
-    
-    let reply = `📊 ডেটাবেস রিপোর্ট:\n\n`;
-    reply += `👥 ইউজার: ${userCount}টি\n`;
-    reply += `📁 টপিক: ${topicCount}টি\n\n`;
-    
-    if (topicCount > 0) {
-      reply += `📌 টপিকের নাম:\n`;
-      topicsSnapshot.docs.forEach((doc, i) => {
-        const data = doc.data();
-        reply += `${i+1}. ${data.title || 'নামবিহীন'} (${doc.id})\n`;
-      });
-    }
-    
-    if (userCount > 0) {
-      reply += `\n👤 ইউজার:\n`;
-      usersSnapshot.docs.forEach((doc, i) => {
-        const data = doc.data();
-        reply += `${i+1}. ${data.firstName || 'N/A'} (${data.verified ? '✅' : '❌'})\n`;
-      });
-    }
-    
+    const [topics, users] = await Promise.all([getTopicsCached(), getUserCountsCached()]);
+    let reply = `📊 ডেটাবেস রিপোর্ট:\n\n👥 ইউজার: ${users.totalUsers}টি\n📁 টপিক: ${topics.length}টি\n\n`;
+    reply += topics.length ? `📌 প্রথম 20টি টপিক:\n${topics.slice(0,20).map((t,i)=>`${i+1}. ${t.title || 'নামবিহীন'} (${t.id})`).join('\n')}` : '📭 কোনো টপিক নেই।';
     await ctx.reply(reply);
-    
-  } catch (error) {
-    console.error('❌ testdb error:', error);
-    await ctx.reply('❌ ডেটাবেস চেক করতে সমস্যা: ' + error.message);
-  }
+  } catch (error) { console.error('❌ testdb error:', error); await ctx.reply('❌ ডেটাবেস চেক করতে সমস্যা: ' + error.message); }
 });
 
 
 bot.on('text', async (ctx) => {
   const userId = ctx.from.id;
   const text = ctx.message.text.trim();
+
+  if (renameData[userId]) {
+    const state = renameData[userId];
+    if (state.step === 'id') {
+      const doc = await db.collection('topics').doc(text).get();
+      if (!doc.exists) return ctx.reply('❌ এই Video/Topic ID পাওয়া যায়নি। আবার ID পাঠান।');
+      state.topicId = text; state.step = 'title';
+      return ctx.reply(`📌 বর্তমান Title: ${doc.data().title || 'নামবিহীন'}\n\n✏️ নতুন Title পাঠান:`);
+    }
+    if (state.step === 'title') {
+      if (!text || text.length > 200) return ctx.reply('❌ Title 1-200 অক্ষরের মধ্যে দিন।');
+      await db.collection('topics').doc(state.topicId).update({ title: text, updatedAt: new Date().toISOString() });
+      delete renameData[userId]; invalidateTopicsCache();
+      return ctx.reply(`✅ Title পরিবর্তন হয়েছে।\n🆔 ${state.topicId}\n📌 ${text}`);
+    }
+  }
+
+  if (thumbnailData[userId]) {
+    const state = thumbnailData[userId];
+    if (state.step === 'id') {
+      const doc = await db.collection('topics').doc(text).get();
+      if (!doc.exists) return ctx.reply('❌ এই Video/Topic ID পাওয়া যায়নি। আবার ID পাঠান।');
+      state.topicId = text; state.step = 'photo';
+      return ctx.reply('🖼️ এখন নতুন thumbnail হিসেবে একটি Photo পাঠান।');
+    }
+  }
+
+  if (updateAdsData[userId] && updateAdsData[userId].step === 'dailyLimit') {
+    const value = Number(text);
+    if (!Number.isInteger(value) || value < 1 || value > 1000) return ctx.reply('❌ Limit 1-1000 এর মধ্যে হতে হবে।');
+    await db.collection('system').doc('settings').set({ dailyAdLimit: value }, { merge: true });
+    dailyLimitCache = value; dailyLimitCacheAt = Date.now();
+    delete updateAdsData[userId];
+    return ctx.reply(`✅ Daily Ad Limit এখন ${value}টি।`);
+  }
 
   // /ads interactive flow: /ads -> Topic ID -> new Ads count
   if (updateAdsData[userId]) {
@@ -756,6 +861,7 @@ bot.on('text', async (ctx) => {
           adsRequired: ads,
           updatedAt: new Date().toISOString()
         });
+        invalidateTopicsCache();
 
         delete updateAdsData[userId];
         return ctx.reply(
@@ -890,6 +996,16 @@ bot.on('photo', async (ctx) => {
     return;
   }
 
+  if (thumbnailData[userId] && thumbnailData[userId].step === 'photo') {
+    try {
+      const storedFileId = await forwardPhotoToStorageChannel(ctx, fileId);
+      await db.collection('topics').doc(thumbnailData[userId].topicId).update({ thumbnail: storedFileId, updatedAt: new Date().toISOString() });
+      const id = thumbnailData[userId].topicId;
+      delete thumbnailData[userId]; invalidateTopicsCache();
+      return ctx.reply(`✅ Thumbnail আপডেট হয়েছে।\n🆔 ${id}`);
+    } catch (e) { return ctx.reply('❌ Thumbnail আপডেট করতে সমস্যা হয়েছে।'); }
+  }
+
   try {
     const storedFileId = await forwardPhotoToStorageChannel(ctx, fileId);
     
@@ -930,6 +1046,7 @@ async function saveTopic(ctx, data) {
       sortOrder: Date.now(),
       createdAt: new Date().toISOString()
     });
+    invalidateTopicsCache();
     await ctx.reply(`✅ টপিক "${data.title}" তৈরি হয়েছে!\n📹 ভিডিও সংখ্যা: ${data.videos.length}\n🔢 অ্যাড প্রয়োজন: ${data.adsRequired}\n🆔 টপিক আইডি: <code>${topicRef.id}</code>`, { parse_mode: 'HTML' });
   } catch (error) {
     console.error('Error saving topic:', error);
@@ -951,6 +1068,7 @@ async function saveVideo(ctx, data) {
       sortOrder: Date.now(),
       createdAt: new Date().toISOString()
     });
+    invalidateTopicsCache();
     await ctx.reply(`✅ ভিডিও "${data.title}" যোগ হয়েছে!\n🆔 টপিক আইডি: <code>${topicRef.id}</code>`, { parse_mode: 'HTML' });
   } catch (error) {
     console.error('Error saving video:', error);
@@ -982,29 +1100,35 @@ app.get('/api/users/verify/:userId', async (req, res) => {
 
 app.get('/api/topics', async (req, res) => {
   try {
-    const snapshot = await db.collection('topics').get();
-    const topics = [];
-    snapshot.docs.forEach(doc => {
-      topics.push({ id: doc.id, ...doc.data() });
-    });
-    // Manual order first; old topics fall back to upload time.
-    topics.sort((a, b) => {
-      const orderA = Number.isFinite(Number(a.sortOrder)) ? Number(a.sortOrder) : new Date(a.createdAt || 0).getTime();
-      const orderB = Number.isFinite(Number(b.sortOrder)) ? Number(b.sortOrder) : new Date(b.createdAt || 0).getTime();
-      return orderB - orderA;
-    });
-    res.json(topics);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    const topics = await getTopicsCached();
+    // Cards only need metadata. Do not send the potentially large videos[] array.
+    const cards = topics.map(({ videos, ...topic }) => ({
+      ...topic,
+      videoCount: topic.videoCount || (Array.isArray(videos) ? videos.length : 0)
+    }));
+    res.set('Cache-Control', 'private, max-age=30');
+    res.json(cards);
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.get('/api/thumbnail/:fileId', async (req, res) => {
   try {
     const fileId = req.params.fileId;
-    const fileLink = await bot.telegram.getFileLink(fileId);
-    res.redirect(fileLink);
+    const now = Date.now();
+    let entry = fileLinkCache.get(fileId);
+    if (!entry || entry.expiresAt <= now) {
+      entry = { promise: bot.telegram.getFileLink(fileId), expiresAt: now + FILE_LINK_CACHE_TTL };
+      fileLinkCache.set(fileId, entry);
+      entry.url = await entry.promise;
+      entry.promise = null;
+    } else if (entry.promise) {
+      entry.url = await entry.promise;
+      entry.promise = null;
+    }
+    res.set('Cache-Control', 'public, max-age=600');
+    return res.redirect(entry.url);
   } catch (error) {
+    fileLinkCache.delete(req.params.fileId);
     res.status(404).json({ error: 'Thumbnail not found' });
   }
 });
@@ -1021,14 +1145,20 @@ app.get('/api/user-unlocked/:userId', async (req, res) => {
     const unlockedTopics = data.unlockedTopics || [];
     const topicUnlockTime = data.topicUnlockTime || {};
     const now = Date.now();
-    const THIRTY_MINUTES = 30 * 60 * 1000;
     
     const activeUnlocked = unlockedTopics.filter(topicId => {
       const time = topicUnlockTime[topicId];
       return time && (now - time) < THIRTY_MINUTES;
     });
     
-    res.json({ topics: activeUnlocked });
+    const expiresAt = {};
+    activeUnlocked.forEach(topicId => {
+      expiresAt[topicId] = Number(topicUnlockTime[topicId]) + THIRTY_MINUTES;
+    });
+    const today = new Date().toISOString().slice(0, 10);
+    const dailyUsed = data.dailyAdDate === today ? (Number(data.dailyAdsUsed) || 0) : 0;
+    const dailyLimit = await getDailyAdLimit();
+    res.json({ topics: activeUnlocked, expiresAt, dailyLimit, dailyUsed });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -1043,7 +1173,6 @@ async function deliverUnlockedTopic(userId, topicId) {
   let sentMessages = data.sentMessages || [];
 
   const now = Date.now();
-  const THIRTY_MINUTES = 30 * 60 * 1000;
   const topicRef = db.collection('topics').doc(topicId);
   const topicDoc = await topicRef.get();
   if (!topicDoc.exists) throw new Error('Topic not found');
@@ -1089,7 +1218,23 @@ async function deliverUnlockedTopic(userId, topicId) {
     }
   }
 
-  await userRef.set({ unlockedTopics, topicUnlockTime, sentMessages }, { merge: true });
+  // Keep the user document small: old message records are no longer useful
+  // once their 30-minute lifetime has passed. The cleanup scheduler handles
+  // actual Telegram deletion; this only prunes stale metadata when the user
+  // is already being accessed.
+  sentMessages = sentMessages.filter(m => {
+    const sentAt = Number(m && m.sentAt) || 0;
+    return sentAt && (now - sentAt) < THIRTY_MINUTES;
+  });
+
+  const cleanupDueAt = getCleanupDueAt(sentMessages);
+  await userRef.set({
+    unlockedTopics,
+    topicUnlockTime,
+    sentMessages,
+    cleanupDueAt: cleanupDueAt || null
+  }, { merge: true });
+  invalidateTopicsCache();
   return { success: true, videosDelivered: videos.length };
 }
 
@@ -1105,22 +1250,28 @@ app.post('/api/ad-complete', async (req, res) => {
     const required = Math.max(1, Number(topicDoc.data().adsRequired) || 1);
 
     const userRef = db.collection('users').doc(userId);
+    const dailyLimit = await getDailyAdLimit();
+    const today = new Date().toISOString().slice(0, 10);
     const result = await db.runTransaction(async tx => {
       const snap = await tx.get(userRef);
       const data = snap.exists ? snap.data() : {};
       const progress = { ...(data.adProgress || {}) };
       const unlockedTopics = data.unlockedTopics || [];
       const current = Number(progress[topicId]) || 0;
+      if (unlockedTopics.includes(topicId)) return { count: required, required, unlocked: true, limitReached: false, dailyUsed: Number(data.dailyAdsUsed) || 0 };
 
-      if (unlockedTopics.includes(topicId)) {
-        return { count: required, required, unlocked: true };
-      }
+      const dailyUsed = data.dailyAdDate === today ? (Number(data.dailyAdsUsed) || 0) : 0;
+      if (dailyUsed >= dailyLimit) return { count: current, required, unlocked: false, limitReached: true, dailyUsed };
 
       const next = Math.min(current + 1, required);
       progress[topicId] = next;
-      tx.set(userRef, { adProgress: progress }, { merge: true });
-      return { count: next, required, unlocked: next >= required };
+      tx.set(userRef, { adProgress: progress, dailyAdDate: today, dailyAdsUsed: dailyUsed + 1 }, { merge: true });
+      return { count: next, required, unlocked: next >= required, limitReached: false, dailyUsed: dailyUsed + 1 };
     });
+
+    if (result.limitReached) {
+      return res.status(429).json({ success: false, limitReached: true, dailyLimit, dailyUsed: result.dailyUsed, error: 'আজকের Ad Limit শেষ' });
+    }
 
     if (result.unlocked) {
       await deliverUnlockedTopic(userId, topicId);
@@ -1140,64 +1291,134 @@ app.post('/api/unlock-topic', async (req, res) => {
 });
 
 cron.schedule('* * * * *', async () => {
+  if (cleanupRunning) {
+    console.log('⏭️ Cleanup already running; skipping this minute.');
+    return;
+  }
+  cleanupRunning = true;
   try {
-    console.log('🔄 Running cleanup check...');
-    const snapshot = await db.collection('users').get();
     const now = Date.now();
-    const THIRTY_MINUTES = 30 * 60 * 1000;
+    console.log('🔄 Running cleanup check...');
+
+    // IMPORTANT: do NOT scan the whole users collection every minute.
+    // Only users whose next cleanup time has arrived are read.
+    const snapshot = await db.collection('users')
+      .where('cleanupDueAt', '<=', now)
+      .limit(500)
+      .get();
+
     let deletedCount = 0;
     let updatedUsers = 0;
-    
+
     for (const doc of snapshot.docs) {
       const data = doc.data();
-      let needsUpdate = false;
-      
-      const sentMessages = data.sentMessages || [];
+      const sentMessages = Array.isArray(data.sentMessages) ? data.sentMessages : [];
       const remainingMessages = [];
+      let hadExpired = false;
+      let retryNeeded = false;
+
       for (const msg of sentMessages) {
-        if (now - msg.sentAt < THIRTY_MINUTES) {
+        const sentAt = Number(msg && msg.sentAt) || 0;
+        if (!sentAt || (now - sentAt) < THIRTY_MINUTES) {
+          if (sentAt) remainingMessages.push(msg);
+          continue;
+        }
+
+        hadExpired = true;
+        try {
+          await bot.telegram.deleteMessage(msg.chatId, msg.messageId);
+          deletedCount++;
+          console.log(`🗑️ Deleted video ${msg.messageId} for user ${msg.chatId}`);
+        } catch (error) {
+          // Keep failed deletions so the next cleanup pass can retry them.
+          retryNeeded = true;
           remainingMessages.push(msg);
-        } else {
-          try {
-            await bot.telegram.deleteMessage(msg.chatId, msg.messageId);
-            deletedCount++;
-            console.log(`🗑️ Deleted video ${msg.messageId} for user ${msg.chatId}`);
-          } catch (error) {
-            console.error(`❌ Could not delete message ${msg.messageId}:`, error.message);
-          }
+          console.error(`❌ Could not delete message ${msg.messageId}:`, error.message);
         }
       }
-      
-      if (remainingMessages.length !== sentMessages.length) {
-        await doc.ref.set({ sentMessages: remainingMessages }, { merge: true });
-        needsUpdate = true;
-      }
-      
-      const unlockedTopics = data.unlockedTopics || [];
+
+      const unlockedTopics = Array.isArray(data.unlockedTopics) ? data.unlockedTopics : [];
       const topicUnlockTime = data.topicUnlockTime || {};
-      
       const stillUnlocked = unlockedTopics.filter(topicId => {
-        const time = topicUnlockTime[topicId];
+        const time = Number(topicUnlockTime[topicId]) || 0;
         return time && (now - time) < THIRTY_MINUTES;
       });
-      
-      if (stillUnlocked.length !== unlockedTopics.length) {
-        await doc.ref.set({
-          unlockedTopics: stillUnlocked
-        }, { merge: true });
-        needsUpdate = true;
+
+      // If a Telegram deletion failed, retry in about one minute.
+      // Otherwise schedule the next known message expiry.
+      let nextCleanupAt = null;
+      if (retryNeeded) {
+        nextCleanupAt = now + 60 * 1000;
+      } else {
+        nextCleanupAt = getCleanupDueAt(remainingMessages);
       }
-      
-      if (needsUpdate) updatedUsers++;
+
+      const updates = { cleanupDueAt: nextCleanupAt || null };
+      if (hadExpired || remainingMessages.length !== sentMessages.length) {
+        updates.sentMessages = remainingMessages;
+      }
+      if (stillUnlocked.length !== unlockedTopics.length) {
+        updates.unlockedTopics = stillUnlocked;
+      }
+
+      // Avoid unnecessary writes when nothing actually changed.
+      if (Object.keys(updates).length > 1 || Number(data.cleanupDueAt) !== Number(updates.cleanupDueAt)) {
+        await doc.ref.set(updates, { merge: true });
+        updatedUsers++;
+      }
     }
-    
-    if (deletedCount > 0 || updatedUsers > 0) {
-      console.log(`✅ Cleanup: ${deletedCount} videos deleted, ${updatedUsers} users updated`);
+
+    if (deletedCount > 0 || updatedUsers > 0 || snapshot.size > 0) {
+      console.log(`✅ Cleanup: ${deletedCount} videos deleted, ${updatedUsers} users processed, ${snapshot.size} due users`);
     }
   } catch (error) {
     console.error('❌ Cron error:', error);
+  } finally {
+    cleanupRunning = false;
   }
 });
+
+// One-time migration for users created by the older cleanup system.
+// It runs only once per database version, not on every restart.
+async function migrateCleanupSchedule() {
+  const markerRef = db.collection('system').doc('cleanup');
+  try {
+    const marker = await markerRef.get();
+    if (marker.exists && Number(marker.data().version) >= 2) return;
+
+    console.log('🛠️ Preparing optimized cleanup schedule...');
+    const snapshot = await db.collection('users').get();
+    let batch = db.batch();
+    let batchCount = 0;
+    let changed = 0;
+
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      const sentMessages = Array.isArray(data.sentMessages) ? data.sentMessages : [];
+      const dueAt = getCleanupDueAt(sentMessages);
+      if (Number(data.cleanupDueAt) !== Number(dueAt)) {
+        batch.set(doc.ref, { cleanupDueAt: dueAt || null }, { merge: true });
+        batchCount++;
+        changed++;
+      }
+
+      // Firestore batches have a 500-operation limit. Keep a safe margin.
+      if (batchCount >= 450) {
+        await batch.commit();
+        batch = db.batch();
+        batchCount = 0;
+      }
+    }
+
+    batch.set(markerRef, { version: 2, updatedAt: Date.now() }, { merge: true });
+    await batch.commit();
+    console.log(`✅ Cleanup migration complete: ${changed} users scheduled.`);
+  } catch (error) {
+    console.error('❌ Cleanup migration error:', error.message);
+  }
+}
+
+migrateCleanupSchedule();
 
 bot.launch()
   .then(() => console.log('🤖 Bot started successfully'))
