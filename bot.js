@@ -21,12 +21,144 @@ admin.initializeApp({
 });
 
 const db = admin.firestore();
+db.settings({ ignoreUndefinedProperties: true });
 
-// ==============================
-// ⚡ Performance / Firestore cache
-// ==============================
+// =============================================
+// 🛡️ GLOBAL ERROR HANDLERS (must-have)
+// =============================================
+
+// ✅ 1) Telegraf-এর সর্বোচ্চ error handler
+// এইটা না থাকলে এক user-এর error পুরো polling থামিয়ে দিতে পারে
+bot.catch((err, ctx) => {
+  const msg = err && err.message ? err.message : String(err);
+  const updateType = ctx && ctx.updateType ? ctx.updateType : 'unknown';
+  console.error(`🚨 Bot error [${updateType}]:`, msg);
+
+  // 403 = bot blocked by user → শুধু ignore
+  if (/403|blocked by the user|user is deactivated|chat not found/i.test(msg)) {
+    console.warn('⚠️ User blocked the bot — ignoring this update.');
+    return;
+  }
+  // 429 = rate limit → কিছু সময় অপেক্ষা
+  if (/429|Too Many Requests|retry after/i.test(msg)) {
+    console.warn('⚠️ Rate limited by Telegram — will retry on next update.');
+    return;
+  }
+  // অন্য কোনো error হলে log করি, কিন্তু bot চলুক
+  // চাইলে এখানে admin-কে notify করতে পারেন
+});
+
+// ✅ 2) পুরো process-এ unhandled rejection crash আটকানো
+process.on('unhandledRejection', (reason) => {
+  const msg = reason && reason.message ? reason.message : String(reason);
+  console.error('🚨 Unhandled Rejection:', msg);
+  if (/403|blocked by the user|chat not found|user is deactivated/i.test(msg)) {
+    console.warn('⚠️ Blocked-user rejection ignored.');
+    return;
+  }
+  // অন্য কিছু হলে process চালু রাখি
+});
+
+process.on('uncaughtException', (err) => {
+  const msg = err && err.message ? err.message : String(err);
+  console.error('🚨 Uncaught Exception:', msg);
+  if (/403|blocked by the user|chat not found|user is deactivated/i.test(msg)) {
+    console.warn('⚠️ Blocked-user exception ignored.');
+    return;
+  }
+  // অন্য error হলে process চালু রাখি যাতে পরের update handle হয়
+});
+
+// =============================================
+// ✅ SAFE SEND HELPERS (403/429 gracefully handle)
+// =============================================
+
+function isBlockedError(err) {
+  const msg = err && err.message ? err.message : String(err || '');
+  return /403|blocked by the user|chat not found|user is deactivated|bot was kicked/i.test(msg);
+}
+
+async function safeSendMessage(chatId, text, extra = {}) {
+  try {
+    return await bot.telegram.sendMessage(chatId, text, extra);
+  } catch (err) {
+    if (isBlockedError(err)) {
+      console.warn(`⚠️ Skipped sendMessage to ${chatId} (blocked).`);
+      return null;
+    }
+    throw err;
+  }
+}
+
+async function safeSendPhoto(chatId, fileId, extra = {}) {
+  try {
+    return await bot.telegram.sendPhoto(chatId, fileId, extra);
+  } catch (err) {
+    if (isBlockedError(err)) {
+      console.warn(`⚠️ Skipped sendPhoto to ${chatId} (blocked).`);
+      return null;
+    }
+    throw err;
+  }
+}
+
+async function safeSendVideo(chatId, fileId, extra = {}) {
+  try {
+    return await bot.telegram.sendVideo(chatId, fileId, extra);
+  } catch (err) {
+    if (isBlockedError(err)) {
+      console.warn(`⚠️ Skipped sendVideo to ${chatId} (blocked).`);
+      return null;
+    }
+    throw err;
+  }
+}
+
+async function safeSendAnimation(chatId, fileId, extra = {}) {
+  try {
+    return await bot.telegram.sendAnimation(chatId, fileId, extra);
+  } catch (err) {
+    if (isBlockedError(err)) {
+      console.warn(`⚠️ Skipped sendAnimation to ${chatId} (blocked).`);
+      return null;
+    }
+    throw err;
+  }
+}
+
+async function safeSendPoll(chatId, question, options, extra = {}) {
+  try {
+    return await bot.telegram.sendPoll(chatId, question, options, extra);
+  } catch (err) {
+    if (isBlockedError(err)) {
+      console.warn(`⚠️ Skipped sendPoll to ${chatId} (blocked).`);
+      return null;
+    }
+    throw err;
+  }
+}
+
+async function safeDeleteMessage(chatId, messageId) {
+  try {
+    await bot.telegram.deleteMessage(chatId, messageId);
+    return true;
+  } catch (err) {
+    if (isBlockedError(err)) return false;
+    // "message to delete not found" বা "message can't be deleted" → ignore
+    if (/message to delete not found|message can't be deleted|MESSAGE_ID_INVALID/i.test(err.message || '')) {
+      return false;
+    }
+    console.warn(`⚠️ deleteMessage failed for ${chatId}/${messageId}: ${err.message}`);
+    return false;
+  }
+}
+
+// =============================================
+// ⚡ PERFORMANCE / CACHE
+// =============================================
+
 const THIRTY_MINUTES = 30 * 60 * 1000;
-const TOPICS_CACHE_TTL = 120 * 1000; // 2 minutes; mutations invalidate immediately
+const TOPICS_CACHE_TTL = 120 * 1000;
 const FILE_LINK_CACHE_TTL = 45 * 60 * 1000;
 const DAILY_LIMIT_CACHE_TTL = 60 * 1000;
 const DEFAULT_DAILY_AD_LIMIT = 15;
@@ -97,10 +229,10 @@ function getCleanupDueAt(sentMessages) {
 
 console.log('✅ Firebase Connected');
 
-const REQUIRED_CHANNELS = process.env.REQUIRED_CHANNELS.split(',').map(id => id.trim());
+const REQUIRED_CHANNELS = (process.env.REQUIRED_CHANNELS || '').split(',').map(id => id.trim()).filter(Boolean);
 const STORAGE_CHANNEL = process.env.STORAGE_CHANNEL;
 const ADMIN_ID = parseInt(process.env.ADMIN_USER_ID);
-const MINI_APP_URL = 'https://telegram-bot-app-24ti.onrender.com';
+const MINI_APP_URL = process.env.MINI_APP_URL || 'https://telegram-bot-app-24ti.onrender.com';
 
 let addTopicData = {};
 let addVideoData = {};
@@ -108,6 +240,10 @@ let broadcastData = {};
 let updateAdsData = {};
 let renameData = {};
 let thumbnailData = {};
+
+// =============================================
+// 🔐 USER HELPERS
+// =============================================
 
 async function getOrCreateUser(userId, username, firstName, lastName) {
   try {
@@ -188,6 +324,10 @@ async function forwardPhotoToStorageChannel(ctx, fileId) {
   }
 }
 
+// =============================================
+// 🚀 /start
+// =============================================
+
 bot.start(async (ctx) => {
   try {
     const userId = ctx.from.id;
@@ -198,7 +338,6 @@ bot.start(async (ctx) => {
       ctx.from.last_name
     );
 
-    // প্রতিবার লাইভ চেক করা হয় — পুরনো "verified" flag কখনোই সরাসরি trust করা হয় না
     const allJoined = await checkAllChannels(ctx);
 
     if (allJoined) {
@@ -213,15 +352,14 @@ bot.start(async (ctx) => {
       );
     }
 
-    // চ্যানেলে নেই — আগে verified থাকলেও এখন সেটা false করে দেওয়া হচ্ছে
     if (user.verified) {
       await updateUser(userId, { verified: false });
     }
 
     const channelButtons = REQUIRED_CHANNELS.map(channel => {
       const cleanId = channel.startsWith('-100') ? channel : channel.replace('@', '');
-      const link = channel.startsWith('-100') 
-        ? `https://t.me/c/${cleanId.replace('-100', '')}` 
+      const link = channel.startsWith('-100')
+        ? `https://t.me/c/${cleanId.replace('-100', '')}`
         : `https://t.me/${cleanId}`;
       return [Markup.button.url(`📢 চ্যানেল জয়েন করুন`, link)];
     });
@@ -232,7 +370,7 @@ bot.start(async (ctx) => {
     );
   } catch (error) {
     console.error('Error in start command:', error);
-    await ctx.reply('❌ কিছু সমস্যা হয়েছে। আবার চেষ্টা করুন।');
+    await ctx.reply('❌ কিছু সমস্যা হয়েছে। আবার চেষ্টা করুন।').catch(() => {});
   }
 });
 
@@ -271,9 +409,13 @@ bot.action('verify_join', async (ctx) => {
     }
   } catch (error) {
     console.error('Error in verify action:', error);
-    await ctx.reply('❌ কিছু সমস্যা হয়েছে। আবার চেষ্টা করুন।');
+    await ctx.reply('❌ কিছু সমস্যা হয়েছে। আবার চেষ্টা করুন।').catch(() => {});
   }
 });
+
+// =============================================
+// 📹 /addvideo, /addtopic
+// =============================================
 
 bot.command('addvideo', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) {
@@ -308,7 +450,7 @@ bot.on('video', async (ctx) => {
 
   try {
     const storedFileId = await forwardVideoToStorageChannel(ctx, fileId);
-    
+
     if (addTopicData[userId]) {
       const data = addTopicData[userId];
       if (data.step === 'video') {
@@ -327,7 +469,7 @@ bot.on('video', async (ctx) => {
       return;
     }
   } catch (error) {
-    await ctx.reply('❌ ভিডিও স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে।');
+    await ctx.reply('❌ ভিডিও স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে।').catch(() => {});
   }
 });
 
@@ -338,10 +480,10 @@ bot.on('document', async (ctx) => {
     return ctx.reply('❌ দয়া করে একটি ভিডিও ফাইল পাঠান।');
   }
   const fileId = document.file_id;
-  
+
   try {
     const storedFileId = await forwardVideoToStorageChannel(ctx, fileId);
-    
+
     if (addTopicData[userId]) {
       const data = addTopicData[userId];
       if (data.step === 'video') {
@@ -360,7 +502,7 @@ bot.on('document', async (ctx) => {
       return;
     }
   } catch (error) {
-    await ctx.reply('❌ ভিডিও স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে।');
+    await ctx.reply('❌ ভিডিও স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে।').catch(() => {});
   }
 });
 
@@ -378,7 +520,7 @@ bot.command('done', async (ctx) => {
 });
 
 // =============================================
-// ✅ অ্যাডমিন কমান্ড
+// ✅ ADMIN COMMANDS
 // =============================================
 
 bot.command('rename', async (ctx) => {
@@ -414,7 +556,6 @@ bot.command('ads', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) {
       return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
     }
-
     updateAdsData[ctx.from.id] = { step: 'topicId' };
     await ctx.reply(
       '🎬 কোন ভিডিও/টপিকের Ads count পরিবর্তন করতে চান?\n\n' +
@@ -426,7 +567,6 @@ bot.command('ads', async (ctx) => {
     await ctx.reply('❌ /ads শুরু করতে সমস্যা হয়েছে: ' + error.message);
   }
 });
-
 
 async function moveTopic(topicId, direction) {
   const topics = await getTopicsCached();
@@ -441,14 +581,12 @@ async function moveTopic(topicId, direction) {
   const aOrder = Number(a.sortOrder);
   const bOrder = Number(b.sortOrder);
 
-  // Normal case: only two documents are written.
   if (Number.isFinite(aOrder) && Number.isFinite(bOrder) && aOrder !== bOrder) {
     const batch = db.batch();
     batch.update(db.collection('topics').doc(a.id), { sortOrder: bOrder });
     batch.update(db.collection('topics').doc(b.id), { sortOrder: aOrder });
     await batch.commit();
   } else {
-    // One-time normalization for old/missing/duplicate sortOrder values.
     const reordered = topics.slice();
     [reordered[index], reordered[targetIndex]] = [reordered[targetIndex], reordered[index]];
     const batch = db.batch();
@@ -467,11 +605,11 @@ bot.command('up', async (ctx) => {
   try {
     const result = await moveTopic(topicId, 'up');
     if (result.edge) return ctx.reply('⬆️ এই ভিডিওটি ইতোমধ্যে সবার উপরে আছে।');
-    await ctx.reply(`✅ ভিডিওটি ১ ধাপ উপরে নেওয়া হয়েছে।\n\n📌 ${result.topic.title || 'নামবিহীন টপিক'}\n🆔 <code>${topicId}</code>`, { parse_mode: 'HTML' });
+    await ctx.reply(`✅ ভিডিওটি ১ ধাপ উপরে নেওয়া হয়েছে।\n\n📌 ${result.topic.title || 'নামবিহীন টপিক'}\n🆔 <code>${topicId}</code>`, { parse_mode: 'HTML' });
   } catch (error) {
-    if (error.message === 'NOT_FOUND') return ctx.reply('❌ এই Video/Topic ID পাওয়া যায়নি।');
+    if (error.message === 'NOT_FOUND') return ctx.reply('❌ এই Video/Topic ID পাওয়া যায়নি।');
     console.error('❌ /up error:', error);
-    return ctx.reply('❌ ভিডিও উপরে নিতে সমস্যা হয়েছে।');
+    return ctx.reply('❌ ভিডিও উপরে নিতে সমস্যা হয়েছে।');
   }
 });
 
@@ -483,22 +621,20 @@ bot.command('down', async (ctx) => {
   try {
     const result = await moveTopic(topicId, 'down');
     if (result.edge) return ctx.reply('⬇️ এই ভিডিওটি ইতোমধ্যে সবার নিচে আছে।');
-    await ctx.reply(`✅ ভিডিওটি ১ ধাপ নিচে নেওয়া হয়েছে।\n\n📌 ${result.topic.title || 'নামবিহীন টপিক'}\n🆔 <code>${topicId}</code>`, { parse_mode: 'HTML' });
+    await ctx.reply(`✅ ভিডিওটি ১ ধাপ নিচে নেওয়া হয়েছে।\n\n📌 ${result.topic.title || 'নামবিহীন টপিক'}\n🆔 <code>${topicId}</code>`, { parse_mode: 'HTML' });
   } catch (error) {
-    if (error.message === 'NOT_FOUND') return ctx.reply('❌ এই Video/Topic ID পাওয়া যায়নি।');
+    if (error.message === 'NOT_FOUND') return ctx.reply('❌ এই Video/Topic ID পাওয়া যায়নি।');
     console.error('❌ /down error:', error);
-    return ctx.reply('❌ ভিডিও নিচে নিতে সমস্যা হয়েছে।');
+    return ctx.reply('❌ ভিডিও নিচে নিতে সমস্যা হয়েছে।');
   }
 });
 
 bot.command('list', async (ctx) => {
   try {
     console.log('📋 /list command by:', ctx.from.id);
-    
     if (ctx.from.id !== ADMIN_ID) {
       return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
     }
-
     await ctx.reply('⏳ তালিকা তৈরি হচ্ছে...');
 
     const topics = await getTopicsCached();
@@ -542,11 +678,9 @@ async function getUserCountsCached() {
 bot.command('admin', async (ctx) => {
   try {
     console.log('📊 /admin command by:', ctx.from.id);
-    
     if (ctx.from.id !== ADMIN_ID) {
       return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
     }
-
     await ctx.reply('⏳ অ্যাডমিন প্যানেল লোড হচ্ছে...');
 
     const counts = await getUserCountsCached();
@@ -564,11 +698,9 @@ bot.command('admin', async (ctx) => {
 bot.command('stats', async (ctx) => {
   try {
     console.log('📊 /stats command by:', ctx.from.id);
-
     if (ctx.from.id !== ADMIN_ID) {
       return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
     }
-
     await ctx.reply('⏳ পরিসংখ্যান লোড হচ্ছে...');
 
     const counts = await getUserCountsCached();
@@ -591,7 +723,7 @@ bot.command('stats', async (ctx) => {
       `✅ যাচাইকৃত ইউজার: ${counts.verifiedUsers} জন\n` +
       `📁 মোট ভিডিও/টপিক: ${topics.length}টি\n` +
       `👁️ মোট ভিউ: ${totalViews}\n\n` +
-      `🏆 ভিডিও অনুযায়ী ভিউ:\n\n`;
+      `🏆 ভিডিও অনুযায়ী ভিউ:\n\n`;
 
     if (topics.length === 0) {
       message += '📭 এখনো কোনো ভিডিও/টপিক নেই।';
@@ -607,7 +739,6 @@ bot.command('stats', async (ctx) => {
         message += `আরও ${topics.length - 30}টি ভিডিও আছে।`;
       }
     }
-
     await ctx.reply(message, { parse_mode: 'HTML' });
   } catch (error) {
     console.error('❌ Error in /stats:', error);
@@ -621,12 +752,12 @@ bot.command('user', async (ctx) => {
     adminUserCursor = null;
     adminUserPage = 1;
     const snap = await db.collection('users').orderBy('createdAt', 'desc').limit(25).get();
-    if (snap.empty) return ctx.reply('📭 এখনো কোনো ইউজার পাওয়া যায়নি।');
+    if (snap.empty) return ctx.reply('📭 এখনো কোনো ইউজার পাওয়া যায়নি।');
     adminUserCursor = snap.docs[snap.docs.length - 1];
     await sendUserPage(ctx, snap.docs, adminUserPage);
   } catch (error) {
     console.error('❌ Error in /user:', error);
-    await ctx.reply('❌ ইউজার তালিকা দেখাতে সমস্যা হয়েছে: ' + error.message);
+    await ctx.reply('❌ ইউজার তালিকা দেখাতে সমস্যা হয়েছে: ' + error.message);
   }
 });
 
@@ -635,7 +766,7 @@ async function sendUserPage(ctx, docs, page) {
   docs.forEach((doc, index) => {
     const user = doc.data();
     const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
-    const displayName = fullName || 'নাম পাওয়া যায়নি';
+    const displayName = fullName || 'নাম পাওয়া যায়নি';
     const username = user.username ? `@${String(user.username).replace(/^@/, '')}` : 'Username নেই';
     const status = user.verified === true ? '✅' : '❌';
     message += `${(page - 1) * 25 + index + 1}. ${displayName}\n`;
@@ -658,18 +789,14 @@ bot.action('admin_users_next', async (ctx) => {
 bot.command('delete', async (ctx) => {
   try {
     console.log('🗑️ /delete command by:', ctx.from.id);
-    
     if (ctx.from.id !== ADMIN_ID) {
       return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
     }
-
     const args = ctx.message.text.split(' ');
     if (args.length < 2) {
       return ctx.reply('⚠️ টপিক আইডি দিন:\n/delete <টপিক_আইডি>');
     }
-
     await ctx.reply(`⏳ টপিক ${args[1]} ডিলিট করা হচ্ছে...`);
-
     await db.collection('topics').doc(args[1]).delete();
     invalidateTopicsCache();
     await ctx.reply(`✅ টপিক ${args[1]} ডিলিট করা হয়েছে।`);
@@ -682,11 +809,9 @@ bot.command('delete', async (ctx) => {
 bot.command('broadcast', async (ctx) => {
   try {
     console.log('📢 /broadcast command by:', ctx.from.id);
-
     if (ctx.from.id !== ADMIN_ID) {
       return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
     }
-
     broadcastData[ctx.from.id] = { step: 'content' };
     await ctx.reply(
       '📢 কী পাঠাতে চান, নিচের যেকোনো একটি করুন:\n\n' +
@@ -705,7 +830,6 @@ bot.command('broadcast', async (ctx) => {
 async function runBroadcast(ctx, data) {
   try {
     await ctx.reply('⏳ ব্রডকাস্ট শুরু হচ্ছে...');
-
     const snapshot = await db.collection('users').where('verified', '==', true).get();
     const users = snapshot.docs.map(doc => doc.data());
 
@@ -713,33 +837,36 @@ async function runBroadcast(ctx, data) {
       return ctx.reply('📭 কোনো যাচাইকৃত ইউজার নেই।');
     }
 
-    let success = 0, failed = 0;
+    let success = 0, failed = 0, blocked = 0;
     for (const user of users) {
       try {
         if (data.type === 'photo') {
-          await bot.telegram.sendPhoto(user.userId, data.file, { caption: data.message || '' });
+          const res = await safeSendPhoto(user.userId, data.file, { caption: data.message || '' });
+          if (res) success++; else blocked++;
         } else if (data.type === 'video') {
-          await bot.telegram.sendVideo(user.userId, data.file, { caption: data.message || '' });
+          const res = await safeSendVideo(user.userId, data.file, { caption: data.message || '' });
+          if (res) success++; else blocked++;
         } else if (data.type === 'animation') {
-          await bot.telegram.sendAnimation(user.userId, data.file, { caption: data.message || '' });
+          const res = await safeSendAnimation(user.userId, data.file, { caption: data.message || '' });
+          if (res) success++; else blocked++;
         } else if (data.type === 'poll') {
-          await bot.telegram.sendPoll(user.userId, data.question, data.options, {
+          const res = await safeSendPoll(user.userId, data.question, data.options, {
             is_anonymous: true,
             allows_multiple_answers: false
           });
+          if (res) success++; else blocked++;
         } else {
-          await bot.telegram.sendMessage(user.userId, data.message);
+          const res = await safeSendMessage(user.userId, data.message);
+          if (res) success++; else blocked++;
         }
-        success++;
       } catch (error) {
         failed++;
         console.error(`❌ Failed to send to ${user.userId}:`, error.message);
       }
-      // ছোট delay, একসাথে অনেক বেশি fast না পাঠানোর জন্য (Telegram rate limit avoid করতে)
       await new Promise(resolve => setTimeout(resolve, 40));
     }
 
-    await ctx.reply(`✅ ব্রডকাস্ট শেষ!\n✅ সফল: ${success}\n❌ ব্যর্থ: ${failed}`);
+    await ctx.reply(`✅ ব্রডকাস্ট শেষ!\n✅ সফল: ${success}\n🚫 Blocked/সরানো: ${blocked}\n❌ ব্যর্থ: ${failed}`);
   } catch (error) {
     console.error('❌ Error in broadcast run:', error);
     await ctx.reply('❌ ব্রডকাস্ট করতে সমস্যা: ' + error.message);
@@ -747,7 +874,7 @@ async function runBroadcast(ctx, data) {
 }
 
 // =============================================
-// 🩺 ডায়াগনস্টিক টুল
+// 🩺 DIAGNOSTIC
 // =============================================
 
 bot.command('checkdb', async (ctx) => {
@@ -768,6 +895,14 @@ bot.command('testdb', async (ctx) => {
   } catch (error) { console.error('❌ testdb error:', error); await ctx.reply('❌ ডেটাবেস চেক করতে সমস্যা: ' + error.message); }
 });
 
+bot.command('ping', async (ctx) => {
+  // Health check command — যেকোনো user দিতে পারে
+  await ctx.reply(`🏓 Pong!\n\n⏱️ Uptime: ${Math.floor(process.uptime())}s\n📍 Server time: ${new Date().toISOString()}`);
+});
+
+// =============================================
+// ✉️ TEXT HANDLER
+// =============================================
 
 bot.on('text', async (ctx) => {
   const userId = ctx.from.id;
@@ -777,7 +912,7 @@ bot.on('text', async (ctx) => {
     const state = renameData[userId];
     if (state.step === 'id') {
       const doc = await db.collection('topics').doc(text).get();
-      if (!doc.exists) return ctx.reply('❌ এই Video/Topic ID পাওয়া যায়নি। আবার ID পাঠান।');
+      if (!doc.exists) return ctx.reply('❌ এই Video/Topic ID পাওয়া যায়নি। আবার ID পাঠান।');
       state.topicId = text; state.step = 'title';
       return ctx.reply(`📌 বর্তমান Title: ${doc.data().title || 'নামবিহীন'}\n\n✏️ নতুন Title পাঠান:`);
     }
@@ -785,7 +920,7 @@ bot.on('text', async (ctx) => {
       if (!text || text.length > 200) return ctx.reply('❌ Title 1-200 অক্ষরের মধ্যে দিন।');
       await db.collection('topics').doc(state.topicId).update({ title: text, updatedAt: new Date().toISOString() });
       delete renameData[userId]; invalidateTopicsCache();
-      return ctx.reply(`✅ Title পরিবর্তন হয়েছে।\n🆔 ${state.topicId}\n📌 ${text}`);
+      return ctx.reply(`✅ Title পরিবর্তন হয়েছে।\n🆔 ${state.topicId}\n📌 ${text}`);
     }
   }
 
@@ -793,7 +928,7 @@ bot.on('text', async (ctx) => {
     const state = thumbnailData[userId];
     if (state.step === 'id') {
       const doc = await db.collection('topics').doc(text).get();
-      if (!doc.exists) return ctx.reply('❌ এই Video/Topic ID পাওয়া যায়নি। আবার ID পাঠান।');
+      if (!doc.exists) return ctx.reply('❌ এই Video/Topic ID পাওয়া যায়নি। আবার ID পাঠান।');
       state.topicId = text; state.step = 'photo';
       return ctx.reply('🖼️ এখন নতুন thumbnail হিসেবে একটি Photo পাঠান।');
     }
@@ -808,7 +943,6 @@ bot.on('text', async (ctx) => {
     return ctx.reply(`✅ Daily Ad Limit এখন ${value}টি।`);
   }
 
-  // /ads interactive flow: /ads -> Topic ID -> new Ads count
   if (updateAdsData[userId]) {
     const state = updateAdsData[userId];
 
@@ -817,22 +951,19 @@ bot.on('text', async (ctx) => {
       if (!topicId || topicId.startsWith('/')) {
         return ctx.reply('❌ সঠিক Video/Topic ID পাঠান।');
       }
-
       try {
         const topicRef = db.collection('topics').doc(topicId);
         const topicDoc = await topicRef.get();
         if (!topicDoc.exists) {
-          return ctx.reply(`❌ এই Video/Topic ID পাওয়া যায়নি:\n${topicId}\n\nআবার সঠিক ID পাঠান।`);
+          return ctx.reply(`❌ এই Video/Topic ID পাওয়া যায়নি:\n${topicId}\n\nআবার সঠিক ID পাঠান।`);
         }
-
         const currentAds = Math.max(1, Number(topicDoc.data().adsRequired) || 1);
         state.topicId = topicId;
         state.currentAds = currentAds;
         state.step = 'count';
-
         return ctx.reply(
           `📌 এই ভিডিও/টপিকের বর্তমান Ads count: ${currentAds}টি\n\n` +
-          '👉 এখন বলুন, কয়টি Ads রাখতে চান?\n' +
+          '👉 এখন বলুন, কয়টি Ads রাখতে চান?\n' +
           'শুধু সংখ্যা পাঠান।\n\n' +
           'উদাহরণ: 6'
         );
@@ -847,25 +978,19 @@ bot.on('text', async (ctx) => {
       if (!Number.isInteger(ads) || ads < 1) {
         return ctx.reply('❌ Ads count 1 বা তার বেশি একটি পূর্ণ সংখ্যা হতে হবে। আবার সংখ্যা পাঠান।');
       }
-
       try {
         const topicRef = db.collection('topics').doc(state.topicId);
         const topicDoc = await topicRef.get();
         if (!topicDoc.exists) {
           delete updateAdsData[userId];
-          return ctx.reply('❌ Video/Topic আর পাওয়া যাচ্ছে না। /ads দিয়ে আবার শুরু করুন।');
+          return ctx.reply('❌ Video/Topic আর পাওয়া যাচ্ছে না। /ads দিয়ে আবার শুরু করুন।');
         }
-
         const oldAds = Math.max(1, Number(topicDoc.data().adsRequired) || 1);
-        await topicRef.update({
-          adsRequired: ads,
-          updatedAt: new Date().toISOString()
-        });
+        await topicRef.update({ adsRequired: ads, updatedAt: new Date().toISOString() });
         invalidateTopicsCache();
-
         delete updateAdsData[userId];
         return ctx.reply(
-          `✅ Ads count সফলভাবে আপডেট হয়েছে!\n\n` +
+          `✅ Ads count সফলভাবে আপডেট হয়েছে!\n\n` +
           `🆔 Video/Topic ID: ${state.topicId}\n` +
           `আগে ছিল: ${oldAds}টি Ads\n` +
           `এখন হবে: ${ads}টি Ads`
@@ -877,9 +1002,7 @@ bot.on('text', async (ctx) => {
     }
   }
 
-  if (text.startsWith('/')) {
-    return;
-  }
+  if (text.startsWith('/')) return;
 
   if (broadcastData[userId]) {
     const data = broadcastData[userId];
@@ -1002,13 +1125,12 @@ bot.on('photo', async (ctx) => {
       await db.collection('topics').doc(thumbnailData[userId].topicId).update({ thumbnail: storedFileId, updatedAt: new Date().toISOString() });
       const id = thumbnailData[userId].topicId;
       delete thumbnailData[userId]; invalidateTopicsCache();
-      return ctx.reply(`✅ Thumbnail আপডেট হয়েছে।\n🆔 ${id}`);
-    } catch (e) { return ctx.reply('❌ Thumbnail আপডেট করতে সমস্যা হয়েছে।'); }
+      return ctx.reply(`✅ Thumbnail আপডেট হয়েছে।\n🆔 ${id}`);
+    } catch (e) { return ctx.reply('❌ Thumbnail আপডেট করতে সমস্যা হয়েছে।'); }
   }
 
   try {
     const storedFileId = await forwardPhotoToStorageChannel(ctx, fileId);
-    
     if (addTopicData[userId]) {
       const data = addTopicData[userId];
       if (data.step === 'thumbnail') {
@@ -1028,9 +1150,13 @@ bot.on('photo', async (ctx) => {
       }
     }
   } catch (error) {
-    await ctx.reply('❌ থাম্বনেইল স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে।');
+    await ctx.reply('❌ থাম্বনেইল স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে।').catch(() => {});
   }
 });
+
+// =============================================
+// 💾 SAVE HELPERS
+// =============================================
 
 async function saveTopic(ctx, data) {
   try {
@@ -1101,7 +1227,6 @@ app.get('/api/users/verify/:userId', async (req, res) => {
 app.get('/api/topics', async (req, res) => {
   try {
     const topics = await getTopicsCached();
-    // Cards only need metadata. Do not send the potentially large videos[] array.
     const cards = topics.map(({ videos, ...topic }) => ({
       ...topic,
       videoCount: topic.videoCount || (Array.isArray(videos) ? videos.length : 0)
@@ -1145,12 +1270,10 @@ app.get('/api/user-unlocked/:userId', async (req, res) => {
     const unlockedTopics = data.unlockedTopics || [];
     const topicUnlockTime = data.topicUnlockTime || {};
     const now = Date.now();
-    
     const activeUnlocked = unlockedTopics.filter(topicId => {
       const time = topicUnlockTime[topicId];
       return time && (now - time) < THIRTY_MINUTES;
     });
-    
     const expiresAt = {};
     activeUnlocked.forEach(topicId => {
       expiresAt[topicId] = Number(topicUnlockTime[topicId]) + THIRTY_MINUTES;
@@ -1182,8 +1305,6 @@ async function deliverUnlockedTopic(userId, topicId) {
     unlockedTopics.push(topicId);
     topicUnlockTime[topicId] = now;
 
-    // Popularity + recent-trending data for the Mini App categories.
-    // Keep only the latest 100 unlock timestamps so the document stays small.
     try {
       const currentTopicData = topicDoc.data() || {};
       const existingRecent = Array.isArray(currentTopicData.recentUnlocks) ? currentTopicData.recentUnlocks : [];
@@ -1208,20 +1329,19 @@ async function deliverUnlockedTopic(userId, topicId) {
     try {
       const alreadySent = sentMessages.some(m => m.videoId === videoId && m.topicId === topicId && (now - m.sentAt) < THIRTY_MINUTES);
       if (alreadySent) continue;
-      const sentMsg = await bot.telegram.sendVideo(userId, videoId, {
+      // safeSendVideo uses 403-tolerant wrapper
+      const sentMsg = await safeSendVideo(userId, videoId, {
         protect_content: true,
-        caption: '⏳ এই ভিডিও ৩০ মিনিট পর ডিলিট হয়ে যাবে।'
+        caption: '⏳ এই ভিডিও ৩০ মিনিট পর ডিলিট হয়ে যাবে।'
       });
-      sentMessages.push({ messageId: sentMsg.message_id, chatId: userId, videoId, topicId, sentAt: Date.now() });
+      if (sentMsg) {
+        sentMessages.push({ messageId: sentMsg.message_id, chatId: userId, videoId, topicId, sentAt: Date.now() });
+      }
     } catch (sendError) {
       console.error(`❌ Error sending video:`, sendError.message);
     }
   }
 
-  // Keep the user document small: old message records are no longer useful
-  // once their 30-minute lifetime has passed. The cleanup scheduler handles
-  // actual Telegram deletion; this only prunes stale metadata when the user
-  // is already being accessed.
   sentMessages = sentMessages.filter(m => {
     const sentAt = Number(m && m.sentAt) || 0;
     return sentAt && (now - sentAt) < THIRTY_MINUTES;
@@ -1238,7 +1358,6 @@ async function deliverUnlockedTopic(userId, topicId) {
   return { success: true, videosDelivered: videos.length };
 }
 
-// One completed rewarded ad = one server-side progress increment.
 app.post('/api/ad-complete', async (req, res) => {
   try {
     const userId = String(req.body.userId || '').trim();
@@ -1285,14 +1404,48 @@ app.post('/api/ad-complete', async (req, res) => {
   }
 });
 
-// Legacy endpoint kept, but it can no longer unlock a topic by itself.
 app.post('/api/unlock-topic', async (req, res) => {
   return res.status(403).json({ error: 'Complete the required rewarded ads first.' });
 });
 
-cron.schedule('* * * * *', async () => {
+// =============================================
+// 🩺 HEALTH CHECK + SELF-PING (Render Free-এর জন্য critical)
+// =============================================
+
+app.get('/health', (req, res) => {
+  const botRunning = !!(bot && bot.telegram);
+  res.json({
+    ok: true,
+    botRunning,
+    uptime: Math.floor(process.uptime()),
+    time: new Date().toISOString(),
+    memory: process.memoryUsage().rss
+  });
+});
+
+app.get('/', (req, res) => {
+  res.json({ ok: true, service: 'telegram-bot', time: new Date().toISOString() });
+});
+
+// Render Free service sleep এড়ানোর জন্য self-ping (প্রতি ১০ মিনিট)
+const SELF_URL = process.env.RENDER_EXTERNAL_URL || null;
+if (SELF_URL) {
+  setInterval(() => {
+    // Node 18+ এ global fetch built-in
+    if (typeof fetch === 'function') {
+      fetch(`${SELF_URL}/health`).catch(() => {});
+    }
+  }, 10 * 60 * 1000);
+  console.log(`🔁 Self-ping enabled for ${SELF_URL}/health`);
+}
+
+// =============================================
+// 🧹 CLEANUP CRON (light: every 2 minutes)
+// =============================================
+
+cron.schedule('*/2 * * * *', async () => {
   if (cleanupRunning) {
-    console.log('⏭️ Cleanup already running; skipping this minute.');
+    console.log('⏭️ Cleanup already running; skipping this cycle.');
     return;
   }
   cleanupRunning = true;
@@ -1300,11 +1453,9 @@ cron.schedule('* * * * *', async () => {
     const now = Date.now();
     console.log('🔄 Running cleanup check...');
 
-    // IMPORTANT: do NOT scan the whole users collection every minute.
-    // Only users whose next cleanup time has arrived are read.
     const snapshot = await db.collection('users')
       .where('cleanupDueAt', '<=', now)
-      .limit(500)
+      .limit(200)
       .get();
 
     let deletedCount = 0;
@@ -1323,17 +1474,14 @@ cron.schedule('* * * * *', async () => {
           if (sentAt) remainingMessages.push(msg);
           continue;
         }
-
         hadExpired = true;
-        try {
-          await bot.telegram.deleteMessage(msg.chatId, msg.messageId);
-          deletedCount++;
-          console.log(`🗑️ Deleted video ${msg.messageId} for user ${msg.chatId}`);
-        } catch (error) {
-          // Keep failed deletions so the next cleanup pass can retry them.
+        const ok = await safeDeleteMessage(msg.chatId, msg.messageId);
+        if (ok) deletedCount++;
+        else {
+          // Blocked user হলে retry করা অর্থহীন, তাই drop করি
+          if (isBlockedError({ message: 'blocked by the user' })) continue;
           retryNeeded = true;
           remainingMessages.push(msg);
-          console.error(`❌ Could not delete message ${msg.messageId}:`, error.message);
         }
       }
 
@@ -1344,14 +1492,9 @@ cron.schedule('* * * * *', async () => {
         return time && (now - time) < THIRTY_MINUTES;
       });
 
-      // If a Telegram deletion failed, retry in about one minute.
-      // Otherwise schedule the next known message expiry.
       let nextCleanupAt = null;
-      if (retryNeeded) {
-        nextCleanupAt = now + 60 * 1000;
-      } else {
-        nextCleanupAt = getCleanupDueAt(remainingMessages);
-      }
+      if (retryNeeded) nextCleanupAt = now + 2 * 60 * 1000;
+      else nextCleanupAt = getCleanupDueAt(remainingMessages);
 
       const updates = { cleanupDueAt: nextCleanupAt || null };
       if (hadExpired || remainingMessages.length !== sentMessages.length) {
@@ -1361,7 +1504,6 @@ cron.schedule('* * * * *', async () => {
         updates.unlockedTopics = stillUnlocked;
       }
 
-      // Avoid unnecessary writes when nothing actually changed.
       if (Object.keys(updates).length > 1 || Number(data.cleanupDueAt) !== Number(updates.cleanupDueAt)) {
         await doc.ref.set(updates, { merge: true });
         updatedUsers++;
@@ -1378,16 +1520,20 @@ cron.schedule('* * * * *', async () => {
   }
 });
 
-// One-time migration for users created by the older cleanup system.
-// It runs only once per database version, not on every restart.
+// =============================================
+// 🛠️ One-time cleanup migration (only once)
+// =============================================
+
 async function migrateCleanupSchedule() {
   const markerRef = db.collection('system').doc('cleanup');
   try {
     const marker = await markerRef.get();
-    if (marker.exists && Number(marker.data().version) >= 2) return;
-
+    if (marker.exists && Number(marker.data().version) >= 2) {
+      console.log('⏭️ Cleanup migration already done.');
+      return;
+    }
     console.log('🛠️ Preparing optimized cleanup schedule...');
-    const snapshot = await db.collection('users').get();
+    const snapshot = await db.collection('users').limit(500).get();
     let batch = db.batch();
     let batchCount = 0;
     let changed = 0;
@@ -1401,15 +1547,12 @@ async function migrateCleanupSchedule() {
         batchCount++;
         changed++;
       }
-
-      // Firestore batches have a 500-operation limit. Keep a safe margin.
       if (batchCount >= 450) {
         await batch.commit();
         batch = db.batch();
         batchCount = 0;
       }
     }
-
     batch.set(markerRef, { version: 2, updatedAt: Date.now() }, { merge: true });
     await batch.commit();
     console.log(`✅ Cleanup migration complete: ${changed} users scheduled.`);
@@ -1418,15 +1561,54 @@ async function migrateCleanupSchedule() {
   }
 }
 
-migrateCleanupSchedule();
+// =============================================
+// 🚀 LAUNCH (Render Free-এর জন্য safe config)
+// =============================================
 
-bot.launch()
-  .then(() => console.log('🤖 Bot started successfully'))
-  .catch(err => console.error('❌ Bot start error:', err));
+// ⚠️ গুরুত্বপূর্ণ: একই BOT_TOKEN দিয়ে একাধিক instance চললে polling conflict হয়।
+// এই warning log করি যাতে DEBUG করা সহজ হয়।
+console.log('🤖 Starting bot polling...');
+
+bot.launch({
+  // পুরনো pending update গুলো skip করি, যাতে restart-এর সময় ঝুলে না যায়
+  dropPendingUpdates: true,
+  // নির্দিষ্ট update type subscribe করি — এতে কম load
+  allowedUpdates: [
+    'message',
+    'callback_query',
+    'inline_query',
+    'chosen_inline_result',
+    'edited_message',
+    'channel_post',
+    'edited_channel_post'
+  ]
+})
+  .then(() => {
+    console.log('🤖 Bot started successfully (polling mode)');
+    // Migration একবার চালাই
+    migrateCleanupSchedule().catch(() => {});
+  })
+  .catch(err => {
+    console.error('❌ Bot start error:', err.message);
+    // Polling failed হলে 5 সেকেন্ড পরে retry
+    setTimeout(() => {
+      console.log('🔄 Retrying bot launch...');
+      bot.launch({ dropPendingUpdates: true }).catch(e => console.error('❌ Retry failed:', e.message));
+    }, 5000);
+  });
 
 app.listen(process.env.PORT || 3000, () => {
   console.log(`🚀 Server running on port ${process.env.PORT || 3000}`);
 });
 
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+// Graceful shutdown — Render restart-এ ঝুলে না যায়
+process.once('SIGINT', () => {
+  console.log('🛑 SIGINT received, stopping bot...');
+  bot.stop('SIGINT');
+  setTimeout(() => process.exit(0), 2000);
+});
+process.once('SIGTERM', () => {
+  console.log('🛑 SIGTERM received, stopping bot...');
+  bot.stop('SIGTERM');
+  setTimeout(() => process.exit(0), 2000);
+});
