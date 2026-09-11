@@ -231,6 +231,8 @@ console.log('✅ Firebase Connected');
 
 const REQUIRED_CHANNELS = (process.env.REQUIRED_CHANNELS || '').split(',').map(id => id.trim()).filter(Boolean);
 const STORAGE_CHANNEL = process.env.STORAGE_CHANNEL;
+const POST_CHANNEL = process.env.POST_CHANNEL || '';
+const BOT_USERNAME = (process.env.BOT_USERNAME || '').replace(/^@/, '').trim();
 const ADMIN_ID = parseInt(process.env.ADMIN_USER_ID);
 const MINI_APP_URL = process.env.MINI_APP_URL || 'https://telegram-bot-app-24ti.onrender.com';
 
@@ -240,6 +242,42 @@ let broadcastData = {};
 let updateAdsData = {};
 let renameData = {};
 let thumbnailData = {};
+let postData = {};
+let helpAdminLinkCache = process.env.HELP_ADMIN_LINK || '';
+let helpAdminLinkCacheAt = helpAdminLinkCache ? Date.now() : 0;
+
+async function getHelpAdminLink() {
+  const now = Date.now();
+  if (helpAdminLinkCache && (now - helpAdminLinkCacheAt) < 10 * 60 * 1000) {
+    return helpAdminLinkCache;
+  }
+  try {
+    const doc = await db.collection('system').doc('settings').get();
+    const link = doc.exists ? String(doc.data().helpAdminLink || '').trim() : '';
+    if (link) {
+      helpAdminLinkCache = link;
+      helpAdminLinkCacheAt = now;
+      return link;
+    }
+  } catch (error) {
+    console.error('❌ Help Admin link read error:', error.message);
+  }
+  return helpAdminLinkCache;
+}
+
+function buildMiniAppTopicUrl(topicId) {
+  const encodedId = encodeURIComponent(String(topicId));
+  if (BOT_USERNAME) return `https://t.me/${BOT_USERNAME}?startapp=${encodedId}`;
+  return `${MINI_APP_URL.replace(/\/$/, '')}/?topic=${encodedId}`;
+}
+
+function buildPostKeyboard(topicId, helpLink) {
+  const buttons = [
+    [Markup.button.url('▶️ ভিডিও দেখুন', buildMiniAppTopicUrl(topicId))]
+  ];
+  if (helpLink) buttons.push([Markup.button.url('Help Admin', helpLink)]);
+  return Markup.inlineKeyboard(buttons);
+}
 
 // =============================================
 // 🔐 USER HELPERS
@@ -448,6 +486,13 @@ bot.on('video', async (ctx) => {
     return;
   }
 
+  if (postData[userId] && postData[userId].step === 'media' && postData[userId].type === 'video') {
+    postData[userId].fileId = fileId;
+    postData[userId].step = 'topicId';
+    await ctx.reply('🔢 এই Preview কোন Video/Topic-এর জন্য?\n\n👉 Video/Topic ID পাঠান:');
+    return;
+  }
+
   try {
     const storedFileId = await forwardVideoToStorageChannel(ctx, fileId);
 
@@ -522,6 +567,137 @@ bot.command('done', async (ctx) => {
 // =============================================
 // ✅ ADMIN COMMANDS
 // =============================================
+
+// =============================================
+// 📢 CHANNEL POSTING
+// =============================================
+
+bot.command('setlink', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+  const args = ctx.message.text.trim().split(/\s+/);
+  const directLink = args.slice(1).join(' ').trim();
+
+  if (directLink) {
+    if (!/^https?:\/\//i.test(directLink)) {
+      return ctx.reply('❌ সঠিক http/https Direct Link দিন।');
+    }
+    try {
+      await db.collection('system').doc('settings').set({
+        helpAdminLink: directLink,
+        updatedAt: Date.now()
+      }, { merge: true });
+      helpAdminLinkCache = directLink;
+      helpAdminLinkCacheAt = Date.now();
+      return ctx.reply('✅ Help Admin link সফলভাবে আপডেট হয়েছে।');
+    } catch (error) {
+      console.error('❌ /setlink save error:', error);
+      return ctx.reply('❌ Link save করতে সমস্যা হয়েছে।');
+    }
+  }
+
+  postData[ctx.from.id] = { step: 'setlink' };
+  await ctx.reply(
+    '🔗 নতুন Help Admin Direct Link পাঠান।\n\n' +
+    'উদাহরণ:\nhttps://example.com/your-link'
+  );
+});
+
+bot.command('post', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+  if (!POST_CHANNEL) {
+    return ctx.reply('❌ POST_CHANNEL সেট করা নেই। Render Environment Variables-এ POST_CHANNEL দিন।');
+  }
+
+  const helpLink = await getHelpAdminLink();
+  if (!helpLink) {
+    return ctx.reply('⚠️ আগে /setlink দিয়ে Help Admin Direct Link সেট করুন।');
+  }
+
+  postData[ctx.from.id] = { step: 'mediaType' };
+  await ctx.reply(
+    '📢 Channel Post তৈরি করা হচ্ছে।\n\nকী পোস্ট করবেন?',
+    Markup.inlineKeyboard([
+      [Markup.button.callback('🎬 Video', 'post_type_video')],
+      [Markup.button.callback('🖼️ Photo', 'post_type_photo')],
+      [Markup.button.callback('❌ Cancel', 'post_cancel')]
+    ])
+  );
+});
+
+bot.action('post_type_video', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('❌ অনুমতি নেই');
+  const state = postData[ctx.from.id];
+  if (!state || state.step !== 'mediaType') return ctx.answerCbQuery('❌ /post দিয়ে আবার শুরু করুন');
+  state.type = 'video';
+  state.step = 'media';
+  await ctx.answerCbQuery();
+  await ctx.reply('🎬 এখন 2–3 সেকেন্ডের Preview Video পাঠান।\n\n⚠️ এটি Storage Channel-এ যাবে না।');
+});
+
+bot.action('post_type_photo', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('❌ অনুমতি নেই');
+  const state = postData[ctx.from.id];
+  if (!state || state.step !== 'mediaType') return ctx.answerCbQuery('❌ /post দিয়ে আবার শুরু করুন');
+  state.type = 'photo';
+  state.step = 'media';
+  await ctx.answerCbQuery();
+  await ctx.reply('🖼️ এখন Channel Post-এর জন্য Photo পাঠান।\n\n⚠️ এটি Storage Channel-এ যাবে না।');
+});
+
+bot.action('post_cancel', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('❌ অনুমতি নেই');
+  delete postData[ctx.from.id];
+  await ctx.answerCbQuery('Cancelled');
+  await ctx.reply('❌ Post বাতিল করা হয়েছে।');
+});
+
+bot.action('post_confirm', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('❌ অনুমতি নেই');
+  const userId = ctx.from.id;
+  const state = postData[userId];
+
+  if (!state || state.step !== 'confirm' || !state.fileId || !state.topicId) {
+    return ctx.answerCbQuery('❌ Post data পাওয়া যায়নি। /post দিয়ে আবার শুরু করুন');
+  }
+  if (!POST_CHANNEL) return ctx.answerCbQuery('❌ POST_CHANNEL সেট করা নেই');
+
+  const helpLink = await getHelpAdminLink();
+  if (!helpLink) return ctx.answerCbQuery('❌ /setlink দিয়ে Help Admin link সেট করুন');
+
+  await ctx.answerCbQuery('Posting...');
+  try {
+    const keyboard = buildPostKeyboard(state.topicId, helpLink);
+    let sent;
+
+    if (state.type === 'video') {
+      sent = await bot.telegram.sendVideo(POST_CHANNEL, state.fileId, {
+        caption: state.caption || undefined,
+        reply_markup: keyboard.reply_markup
+      });
+    } else {
+      sent = await bot.telegram.sendPhoto(POST_CHANNEL, state.fileId, {
+        caption: state.caption || undefined,
+        reply_markup: keyboard.reply_markup
+      });
+    }
+
+    delete postData[userId];
+    await ctx.reply(
+      `✅ Posting Channel-এ Post হয়ে গেছে।\n\n` +
+      `🆔 Video/Topic ID: ${state.topicId}\n` +
+      `📌 Channel Message ID: ${sent.message_id}`
+    );
+  } catch (error) {
+    console.error('❌ /post publish error:', error);
+    await ctx.reply(
+      '❌ Channel-এ Post করা যায়নি।\n\n' +
+      'চেক করুন:\n' +
+      '• Bot-কে Posting Channel-এর Admin করা হয়েছে কিনা\n' +
+      '• Bot-এর Post Messages permission আছে কিনা\n' +
+      '• POST_CHANNEL ঠিক আছে কিনা'
+    );
+  }
+});
 
 bot.command('rename', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
@@ -908,6 +1084,77 @@ bot.on('text', async (ctx) => {
   const userId = ctx.from.id;
   const text = ctx.message.text.trim();
 
+  if (postData[userId]) {
+    const state = postData[userId];
+
+    if (state.step === 'setlink') {
+      if (!/^https?:\/\//i.test(text)) {
+        return ctx.reply('❌ সঠিক http/https Direct Link দিন।');
+      }
+      try {
+        await db.collection('system').doc('settings').set({
+          helpAdminLink: text,
+          updatedAt: Date.now()
+        }, { merge: true });
+        helpAdminLinkCache = text;
+        helpAdminLinkCacheAt = Date.now();
+        delete postData[userId];
+        return ctx.reply('✅ Help Admin link সফলভাবে আপডেট হয়েছে।');
+      } catch (error) {
+        console.error('❌ /setlink save error:', error);
+        return ctx.reply('❌ Link save করতে সমস্যা হয়েছে।');
+      }
+    }
+
+    if (state.step === 'topicId') {
+      const topicId = text;
+      if (!topicId || topicId.startsWith('/')) {
+        return ctx.reply('❌ সঠিক Video/Topic ID পাঠান।');
+      }
+
+      try {
+        const topicDoc = await db.collection('topics').doc(topicId).get();
+        if (!topicDoc.exists) {
+          return ctx.reply(`❌ এই Video/Topic ID পাওয়া যায়নি:\n${topicId}\n\nআবার সঠিক ID দিন।`);
+        }
+
+        const topic = topicDoc.data() || {};
+        state.topicId = topicId;
+        state.title = topic.title || 'নামবিহীন ভিডিও';
+        state.step = 'caption';
+
+        return ctx.reply(
+          `✅ Video/Topic পাওয়া গেছে।\n\n` +
+          `📌 Title: ${state.title}\n` +
+          `🆔 ID: ${topicId}\n\n` +
+          `✍️ এখন Channel Post-এর Caption লিখুন।\n` +
+          `Caption না চাইলে "skip" লিখুন।`
+        );
+      } catch (error) {
+        console.error('❌ /post topic lookup error:', error);
+        return ctx.reply('❌ Video/Topic খুঁজতে সমস্যা হয়েছে। আবার চেষ্টা করুন।');
+      }
+    }
+
+    if (state.step === 'caption') {
+      state.caption = text.toLowerCase() === 'skip' ? '' : text;
+      state.step = 'confirm';
+
+      return ctx.reply(
+        `👀 Post Preview\n\n` +
+        `🎬 Type: ${state.type === 'video' ? 'Video' : 'Photo'}\n` +
+        `🆔 Video/Topic ID: ${state.topicId}\n` +
+        `📝 Caption: ${state.caption || '(কোনো caption নেই)'}\n\n` +
+        `Buttons:\n▶️ ভিডিও দেখুন\nHelp Admin\n\n` +
+        `সব ঠিক থাকলে Post চাপুন।`,
+        Markup.inlineKeyboard([
+          [Markup.button.callback('✅ Post Now', 'post_confirm')],
+          [Markup.button.callback('❌ Cancel', 'post_cancel')]
+        ])
+      );
+    }
+  }
+
   if (renameData[userId]) {
     const state = renameData[userId];
     if (state.step === 'id') {
@@ -1119,6 +1366,13 @@ bot.on('photo', async (ctx) => {
     return;
   }
 
+  if (postData[userId] && postData[userId].step === 'media' && postData[userId].type === 'photo') {
+    postData[userId].fileId = fileId;
+    postData[userId].step = 'topicId';
+    await ctx.reply('🔢 এই Photo কোন Video/Topic-এর জন্য?\n\n👉 Video/Topic ID পাঠান:');
+    return;
+  }
+
   if (thumbnailData[userId] && thumbnailData[userId].step === 'photo') {
     try {
       const storedFileId = await forwardPhotoToStorageChannel(ctx, fileId);
@@ -1221,6 +1475,32 @@ app.get('/api/users/verify/:userId', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/topic/:topicId', async (req, res) => {
+  try {
+    const topicId = String(req.params.topicId || '').trim();
+    if (!topicId) return res.status(400).json({ error: 'Topic ID required' });
+
+    // Single-video landing page: exactly one Firestore document read.
+    const doc = await db.collection('topics').doc(topicId).get();
+    if (!doc.exists) return res.status(404).json({ error: 'Topic not found' });
+
+    const data = doc.data() || {};
+    res.set('Cache-Control', 'private, max-age=20');
+    res.json({
+      id: doc.id,
+      title: data.title || 'নামবিহীন ভিডিও',
+      thumbnail: data.thumbnail || '',
+      adsRequired: Math.max(1, Number(data.adsRequired) || 1),
+      type: data.type || 'single',
+      videoCount: Number(data.videoCount) || (Array.isArray(data.videos) ? data.videos.length : 0),
+      unlockCount: Number(data.unlockCount) || 0
+    });
+  } catch (error) {
+    console.error('❌ Single topic API error:', error);
+    res.status(500).json({ error: 'Could not load video' });
   }
 });
 
