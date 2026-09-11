@@ -561,6 +561,15 @@ bot.on('document', async (ctx) => {
   }
   const fileId = document.file_id;
 
+  // /post preview: NEVER send preview documents to STORAGE_CHANNEL.
+  // Telegram may deliver a video uploaded as a file/document here instead of as a video.
+  if (postData[userId] && postData[userId].step === 'media' && postData[userId].type === 'video') {
+    postData[userId].fileId = fileId;
+    postData[userId].step = 'topicId';
+    await ctx.reply('🔢 এই Preview কোন Video/Topic-এর জন্য?\n\n👉 Video/Topic ID পাঠান:');
+    return;
+  }
+
   try {
     const storedFileId = await forwardVideoToStorageChannel(ctx, fileId);
 
