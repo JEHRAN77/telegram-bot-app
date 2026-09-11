@@ -165,6 +165,9 @@ const DEFAULT_DAILY_AD_LIMIT = 15;
 let topicsCache = null;
 let topicsCacheAt = 0;
 let topicsRefreshPromise = null;
+const SINGLE_TOPIC_CACHE_TTL = 60 * 1000;
+let singleTopicCache = new Map();
+let singleTopicRefresh = new Map();
 let fileLinkCache = new Map();
 let dailyLimitCache = DEFAULT_DAILY_AD_LIMIT;
 let dailyLimitCacheAt = 0;
@@ -177,6 +180,38 @@ let adminUserPage = 0;
 function invalidateTopicsCache() {
   topicsCache = null;
   topicsCacheAt = 0;
+  singleTopicCache.clear();
+  singleTopicRefresh.clear();
+}
+
+async function getSingleTopicCached(topicId) {
+  const id = String(topicId || '').trim();
+  if (!id) return null;
+  const now = Date.now();
+  const cached = singleTopicCache.get(id);
+  if (cached && cached.expiresAt > now) return cached.data;
+  const pending = singleTopicRefresh.get(id);
+  if (pending) return pending;
+
+  const promise = (async () => {
+    const doc = await db.collection('topics').doc(id).get();
+    if (!doc.exists) return null;
+    const data = doc.data() || {};
+    const topic = {
+      id: doc.id,
+      title: data.title || 'নামবিহীন ভিডিও',
+      thumbnail: data.thumbnail || '',
+      adsRequired: Math.max(1, Number(data.adsRequired) || 1),
+      type: data.type || 'single',
+      videoCount: Number(data.videoCount) || (Array.isArray(data.videos) ? data.videos.length : 0),
+      unlockCount: Number(data.unlockCount) || 0
+    };
+    singleTopicCache.set(id, { data: topic, expiresAt: Date.now() + SINGLE_TOPIC_CACHE_TTL });
+    return topic;
+  })().finally(() => singleTopicRefresh.delete(id));
+
+  singleTopicRefresh.set(id, promise);
+  return promise;
 }
 
 function invalidateAdminStatsCache() {
@@ -1483,21 +1518,13 @@ app.get('/api/topic/:topicId', async (req, res) => {
     const topicId = String(req.params.topicId || '').trim();
     if (!topicId) return res.status(400).json({ error: 'Topic ID required' });
 
-    // Single-video landing page: exactly one Firestore document read.
-    const doc = await db.collection('topics').doc(topicId).get();
-    if (!doc.exists) return res.status(404).json({ error: 'Topic not found' });
+    // Hot-topic cache + request coalescing: many users opening the same post at once
+    // share one Firestore read instead of creating hundreds/thousands of reads.
+    const topic = await getSingleTopicCached(topicId);
+    if (!topic) return res.status(404).json({ error: 'Topic not found' });
 
-    const data = doc.data() || {};
-    res.set('Cache-Control', 'private, max-age=20');
-    res.json({
-      id: doc.id,
-      title: data.title || 'নামবিহীন ভিডিও',
-      thumbnail: data.thumbnail || '',
-      adsRequired: Math.max(1, Number(data.adsRequired) || 1),
-      type: data.type || 'single',
-      videoCount: Number(data.videoCount) || (Array.isArray(data.videos) ? data.videos.length : 0),
-      unlockCount: Number(data.unlockCount) || 0
-    });
+    res.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
+    res.json(topic);
   } catch (error) {
     console.error('❌ Single topic API error:', error);
     res.status(500).json({ error: 'Could not load video' });
@@ -1511,7 +1538,7 @@ app.get('/api/topics', async (req, res) => {
       ...topic,
       videoCount: topic.videoCount || (Array.isArray(videos) ? videos.length : 0)
     }));
-    res.set('Cache-Control', 'private, max-age=30');
+    res.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
     res.json(cards);
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
