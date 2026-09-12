@@ -15,10 +15,10 @@
   --line:rgba(160,190,230,.13);
   --text:#f4f7ff;
   --muted:#8793aa;
-  --cyan:#8deaff;
-  --blue:#6ea8ff;
-  --pink:#f38bd5;
-  --green:#65e6b0;
+  --cyan:#f5c76b;
+  --blue:#d79a2b;
+  --pink:#b84a3a;
+  --green:#7ee2b8;
 }
 html,body{min-height:100%;background:var(--bg)}
 body{
@@ -30,9 +30,9 @@ button{font:inherit}
 .app-bg{
   min-height:100vh;
   background:
-    radial-gradient(circle at 15% 5%,rgba(90,130,255,.16),transparent 30%),
-    radial-gradient(circle at 90% 35%,rgba(244,105,205,.10),transparent 32%),
-    linear-gradient(180deg,#070b16 0%,#050812 100%);
+    radial-gradient(circle at 15% 5%,rgba(215,154,43,.14),transparent 30%),
+    radial-gradient(circle at 90% 35%,rgba(184,74,58,.10),transparent 32%),
+    linear-gradient(180deg,#090909 0%,#050505 100%);
 }
 .splash{
   position:fixed;inset:0;z-index:10000;background:#050913;
@@ -42,20 +42,22 @@ button{font:inherit}
 .splash.hide{opacity:0;visibility:hidden;pointer-events:none}
 .splash-inner{text-align:center;animation:splashIn .7s ease both}
 .brand-mark{
-  width:116px;height:116px;border-radius:30px;margin:0 auto 20px;
+  width:124px;height:124px;border-radius:28px;margin:0 auto 20px;
   display:grid;place-items:center;position:relative;overflow:hidden;
   background:#050505;
-  box-shadow:0 16px 55px rgba(0,0,0,.42);
+  border:1px solid rgba(245,199,107,.18);
+  box-shadow:0 18px 60px rgba(0,0,0,.52),0 0 30px rgba(215,154,43,.08);
   animation:logoFloat 2.8s ease-in-out infinite;
 }
 .brand-mark:before{
   content:"";position:absolute;inset:0;
-  background:radial-gradient(circle at 50% 45%,rgba(255,30,55,.10),transparent 62%);
+  background:radial-gradient(circle at 50% 45%,rgba(245,199,107,.08),transparent 62%);
   pointer-events:none;
 }
 .brand-mark img{
   width:100%;height:100%;object-fit:cover;display:block;
-  filter:saturate(.88) contrast(.94) brightness(.9);
+  filter:none;
+  object-fit:contain;
   animation:logoPulse 2.8s ease-in-out infinite;
 }
 @keyframes logoFloat{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-5px) scale(1.025)}}
@@ -76,7 +78,7 @@ button{font:inherit}
 }
 .brand{font-size:17px;font-weight:800;letter-spacing:-.3px}
 .brand span{color:var(--cyan)}
-.avatar{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:13px;color:#07101b;background:linear-gradient(135deg,var(--cyan),var(--pink));box-shadow:0 8px 25px rgba(120,190,255,.18)}
+.avatar{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:13px;color:#07101b;background:linear-gradient(135deg,#f7d27a,#b8732a 55%,#8f2f25);box-shadow:0 8px 25px rgba(120,190,255,.18)}
 .hero{padding:26px 18px 14px}
 .hero .eyebrow{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:var(--cyan);font-weight:700}
 .hero h1{font-size:31px;line-height:1.05;margin-top:8px;letter-spacing:-1.2px}
@@ -87,7 +89,7 @@ button{font:inherit}
   flex:0 0 auto;border:1px solid var(--line);background:rgba(255,255,255,.035);
   color:var(--muted);border-radius:999px;padding:9px 15px;font-size:12px;font-weight:700;
 }
-.tab.active{color:#07101b;background:linear-gradient(135deg,var(--cyan),#b8c9ff);border-color:transparent}
+.tab.active{color:#07101b;background:linear-gradient(135deg,#f7d27a,#d79a2b 55%,#9e3b2d);border-color:transparent}
 
 #loading{padding:18px}
 .skeleton-grid{display:grid;gap:14px}
@@ -118,8 +120,8 @@ button{font:inherit}
 .card-btn,.unlock-btn{
   width:100%;border:0;border-radius:16px;margin-top:15px;padding:14px 16px;
   font-size:14px;font-weight:800;letter-spacing:.2px;color:#06101a;
-  background:linear-gradient(110deg,#8deaff,#8fb2ff 52%,#f18bd7);
-  box-shadow:0 10px 28px rgba(117,169,255,.16);
+  background:linear-gradient(110deg,#f7d27a,#d79a2b 52%,#9e3b2d);
+  box-shadow:0 10px 28px rgba(215,154,43,.16);
 }
 .card-btn:active,.unlock-btn:active{transform:scale(.985)}
 .card-btn.unlocked{background:rgba(101,230,176,.10);color:var(--green);border:1px solid rgba(101,230,176,.25);box-shadow:none}
@@ -148,7 +150,7 @@ button{font:inherit}
 #ad-overlay{display:none;position:fixed;inset:0;z-index:9999;background:rgba(3,6,13,.97);align-items:center;justify-content:center;padding:22px}
 #ad-overlay.show{display:flex}
 .ad-content{width:min(100%,380px);text-align:center}
-.ad-orb{width:72px;height:72px;border-radius:24px;margin:0 auto 24px;background:linear-gradient(135deg,#8deaff,#8f9fff,#f18bd7);box-shadow:0 16px 50px rgba(121,169,255,.2);animation:pulse 1.8s ease-in-out infinite}
+.ad-orb{width:72px;height:72px;border-radius:24px;margin:0 auto 24px;background:linear-gradient(135deg,#f7d27a,#d79a2b,#9e3b2d);box-shadow:0 16px 50px rgba(215,154,43,.16);animation:pulse 1.8s ease-in-out infinite}
 @keyframes pulse{50%{transform:scale(1.05)}}
 .ad-label{color:var(--muted);font-size:13px}
 .ad-timer{font-size:42px;font-weight:850;margin:16px 0;color:var(--text)}
@@ -260,7 +262,7 @@ function startParam(){
 function showSplash(){
   if(splashShown) return;
   splashShown=true;
-  setTimeout(function(){ document.getElementById('splash').classList.add('hide'); },550);
+  setTimeout(function(){ document.getElementById('splash').classList.add('hide'); },1600);
 }
 
 document.getElementById('avatar').textContent=userName().charAt(0).toUpperCase();
@@ -307,7 +309,7 @@ function renderHome(){
     var ads=Math.max(1,Number(t.adsRequired)||1);
     var isUnlocked=!!unlocked[t.id];
     var thumb=t.thumbnail ? API+'/thumbnail/'+encodeURIComponent(t.thumbnail) : '';
-    var img=thumb ? '<img src="'+thumb+'" alt="'+title+'" loading="'+(i<4?'eager':'lazy')+'" decoding="async" onerror="this.style.display=\'none\'">' : '';
+    var img=thumb ? '<img src="'+thumb+'" alt="'+title+'" loading="'+(i<6?'eager':'lazy')+'" fetchpriority="'+(i<2?'high':'auto')+'" decoding="async" onerror="this.style.display=\'none\'">' : '';
     var btn=isUnlocked
       ? '<button class="card-btn unlocked" disabled>CONTENT UNLOCKED</button>'
       : dailyLimitReached
@@ -411,12 +413,35 @@ function loadUnlocked(){
 }
 
 function loadHome(){
-  return fetch(API+'/topics')
+  var cached=null;
+  try{
+    var raw=localStorage.getItem('premium_video_topics_cache');
+    if(raw){
+      var parsed=JSON.parse(raw);
+      if(parsed && Array.isArray(parsed.data) && (Date.now()-Number(parsed.at||0))<120000){
+        cached=parsed.data;
+        topics=cached;
+        renderHome();
+      }
+    }
+  }catch(e){}
+
+  var topicsReq=fetch(API+'/topics')
     .then(function(r){if(!r.ok)throw new Error('topics');return r.json()})
-    .then(function(data){topics=Array.isArray(data)?data:[];renderHome();return loadUnlocked()})
-    .catch(function(){
-      document.getElementById('loading').innerHTML='<div class="error">ভিডিও লোড করতে সমস্যা হয়েছে। আবার চেষ্টা করুন।</div>';
+    .then(function(data){
+      topics=Array.isArray(data)?data:[];
+      try{localStorage.setItem('premium_video_topics_cache',JSON.stringify({at:Date.now(),data:topics}));}catch(e){}
+      renderHome();
+      return topics;
     });
+
+  // Load user state at the same time instead of waiting for the full topic request.
+  var unlockedReq=loadUnlocked();
+  return Promise.all([topicsReq,unlockedReq]).catch(function(){
+    if(!cached){
+      document.getElementById('loading').innerHTML='<div class="error">ভিডিও লোড করতে সমস্যা হয়েছে। আবার চেষ্টা করুন।</div>';
+    }
+  });
 }
 
 function startAds(topic,button){

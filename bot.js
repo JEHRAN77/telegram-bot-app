@@ -509,6 +509,7 @@ bot.command('addtopic', async (ctx) => {
 });
 
 bot.on('video', async (ctx) => {
+  if (!ctx.message || !ctx.from) return;
   const userId = ctx.from.id;
   const video = ctx.message.video;
   const fileId = video.file_id;
@@ -554,6 +555,7 @@ bot.on('video', async (ctx) => {
 });
 
 bot.on('document', async (ctx) => {
+  if (!ctx.message || !ctx.from) return;
   const userId = ctx.from.id;
   const document = ctx.message.document;
   if (!document.mime_type || !document.mime_type.startsWith('video/')) {
@@ -1388,6 +1390,7 @@ bot.on('text', async (ctx) => {
 });
 
 bot.on('animation', async (ctx) => {
+  if (!ctx.message || !ctx.from) return;
   const userId = ctx.from.id;
   if (broadcastData[userId] && broadcastData[userId].step === 'content') {
     broadcastData[userId].type = 'animation';
@@ -1398,6 +1401,7 @@ bot.on('animation', async (ctx) => {
 });
 
 bot.on('photo', async (ctx) => {
+  if (!ctx.message || !ctx.from) return;
   const userId = ctx.from.id;
   const photo = ctx.message.photo;
   const fileId = photo[photo.length - 1].file_id;
@@ -1884,6 +1888,8 @@ async function migrateCleanupSchedule() {
 // ⚠️ গুরুত্বপূর্ণ: একই BOT_TOKEN দিয়ে একাধিক instance চললে polling conflict হয়।
 // এই warning log করি যাতে DEBUG করা সহজ হয়।
 console.log('🤖 Starting bot polling...');
+// Warm the topic cache so the first Mini App request after a Render wake-up is faster.
+getTopicsCached().catch(err => console.warn('⚠️ Topic cache warm-up failed:', err.message));
 
 bot.launch({
   // পুরনো pending update গুলো skip করি, যাতে restart-এর সময় ঝুলে না যায়
@@ -1894,9 +1900,7 @@ bot.launch({
     'callback_query',
     'inline_query',
     'chosen_inline_result',
-    'edited_message',
-    'channel_post',
-    'edited_channel_post'
+    'edited_message'
   ]
 })
   .then(() => {
@@ -1909,7 +1913,10 @@ bot.launch({
     // Polling failed হলে 5 সেকেন্ড পরে retry
     setTimeout(() => {
       console.log('🔄 Retrying bot launch...');
-      bot.launch({ dropPendingUpdates: true }).catch(e => console.error('❌ Retry failed:', e.message));
+      bot.launch({
+        dropPendingUpdates: true,
+        allowedUpdates: ['message','callback_query','inline_query','chosen_inline_result','edited_message']
+      }).catch(e => console.error('❌ Retry failed:', e.message));
     }, 5000);
   });
 
