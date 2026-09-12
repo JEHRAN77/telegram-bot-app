@@ -408,6 +408,10 @@ async function forwardPhotoToStorageChannel(ctx, fileId) {
   }
 }
 
+function getDhakaDateKey(date = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Dhaka', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+}
+
 // =============================================
 // 🚀 /start
 // =============================================
@@ -429,11 +433,20 @@ bot.start(async (ctx) => {
     const requestedTopicId = payload.startsWith('unlock_') ? payload.slice(7).trim() : '';
     const pendingTopicId = String(user.pendingUnlockTopicId || '').trim();
 
-    if (requestedTopicId && pendingTopicId && requestedTopicId !== pendingTopicId) {
+    if (requestedTopicId && (!pendingTopicId || requestedTopicId !== pendingTopicId)) {
       return ctx.reply('❌ এই unlock request আর active নেই। Mini App থেকে আবার unlock করুন।');
     }
 
-    const topicId = pendingTopicId || requestedTopicId;
+    const pendingAt = Number(user.pendingUnlockAt || 0);
+    const pendingValid = pendingTopicId && pendingAt && (Date.now() - pendingAt) < THIRTY_MINUTES;
+    const topicId = pendingValid ? pendingTopicId : '';
+    if (pendingTopicId && !pendingValid) {
+      await updateUser(userId, {
+        pendingUnlockTopicId: admin.firestore.FieldValue.delete(),
+        pendingUnlockAt: admin.firestore.FieldValue.delete()
+      });
+      return ctx.reply('⏳ এই unlock request-এর সময় শেষ হয়ে গেছে। Mini App থেকে আবার unlock করুন।');
+    }
     if (topicId) {
       try {
         await deliverUnlockedTopic(userId, topicId);
@@ -928,6 +941,50 @@ bot.command('admin', async (ctx) => {
   }
 });
 
+bot.command('views', async (ctx) => {
+  try {
+    if (ctx.from.id !== ADMIN_ID) return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+    await ctx.reply('⏳ ভিউ রিপোর্ট তৈরি করা হচ্ছে...');
+
+    const topics = await getTopicsCached();
+    const today = getDhakaDateKey();
+    let totalViews = 0;
+    let todayViews = 0;
+
+    const todayRanking = topics.map(topic => {
+      const total = Number(topic.unlockCount || topic.unlocks || topic.views) || 0;
+      const todayCount = topic.dailyUnlockDate === today
+        ? (Number(topic.dailyUnlockCount) || 0)
+        : 0;
+      totalViews += total;
+      todayViews += todayCount;
+      return { title: String(topic.title || 'নামবিহীন').replace(/\n/g, ' ').trim(), views: todayCount };
+    })
+    .filter(item => item.views > 0)
+    .sort((a, b) => b.views - a.views || a.title.localeCompare(b.title));
+
+    let message =
+      `📊 VIEW REPORT\n\n` +
+      `👁️ Total Views: ${totalViews.toLocaleString('en-US')}\n` +
+      `📅 Today: ${todayViews.toLocaleString('en-US')}\n\n` +
+      `🔥 Top 5 Today\n`;
+
+    if (todayRanking.length === 0) {
+      message += `আজ এখনো কোনো ভিডিও Unlock হয়নি।`;
+    } else {
+      todayRanking.slice(0, 5).forEach((item, index) => {
+        const safeTitle = item.title.slice(0, 70) || 'নামবিহীন';
+        message += `${index + 1}. ${safeTitle} — ${item.views.toLocaleString('en-US')}\n`;
+      });
+    }
+
+    await ctx.reply(message);
+  } catch (error) {
+    console.error('❌ Error in /views:', error);
+    await ctx.reply('❌ ভিউ রিপোর্ট তৈরি করতে সমস্যা হয়েছে: ' + error.message);
+  }
+});
+
 bot.command('stats', async (ctx) => {
   try {
     console.log('📊 /stats command by:', ctx.from.id);
@@ -949,13 +1006,18 @@ bot.command('stats', async (ctx) => {
     const totalViews = topics.reduce((sum, topic) => {
       return sum + (Number(topic.unlockCount || topic.unlocks || topic.views) || 0);
     }, 0);
+    const todayKey = getDhakaDateKey();
+    const todayViews = topics.reduce((sum, topic) => {
+      return sum + (topic.dailyUnlockDate === todayKey ? (Number(topic.dailyUnlockCount) || 0) : 0);
+    }, 0);
 
     let message =
       `📊 স্ট্যাটিসটিক্স\n\n` +
       `👥 মোট ইউজার: ${counts.totalUsers} জন\n` +
       `✅ যাচাইকৃত ইউজার: ${counts.verifiedUsers} জন\n` +
       `📁 মোট ভিডিও/টপিক: ${topics.length}টি\n` +
-      `👁️ মোট ভিউ: ${totalViews}\n\n` +
+      `👁️ মোট ভিউ: ${totalViews}\n` +
+      `📅 আজকের ভিউ: ${todayViews}\n\n` +
       `🏆 ভিডিও অনুযায়ী ভিউ:\n\n`;
 
     if (topics.length === 0) {
@@ -1607,7 +1669,7 @@ app.get('/api/user-unlocked/:userId', async (req, res) => {
     activeUnlocked.forEach(topicId => {
       expiresAt[topicId] = Number(topicUnlockTime[topicId]) + THIRTY_MINUTES;
     });
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getDhakaDateKey();
     const dailyUsed = data.dailyAdDate === today ? (Number(data.dailyAdsUsed) || 0) : 0;
     const dailyLimit = await getDailyAdLimit();
     res.json({ topics: activeUnlocked, expiresAt, dailyLimit, dailyUsed });
@@ -1643,11 +1705,20 @@ async function deliverUnlockedTopic(userId, topicId) {
         .slice(-99);
       recentUnlocks.push(now);
 
-      await topicRef.set({
-        unlockCount: admin.firestore.FieldValue.increment(1),
-        lastUnlockAt: now,
-        recentUnlocks
-      }, { merge: true });
+      await db.runTransaction(async tx => {
+        const fresh = await tx.get(topicRef);
+        const current = fresh.exists ? (fresh.data() || {}) : {};
+        const todayKey = getDhakaDateKey(new Date(now));
+        const sameDay = current.dailyUnlockDate === todayKey;
+        const dailyUnlockCount = sameDay ? (Number(current.dailyUnlockCount) || 0) + 1 : 1;
+        tx.set(topicRef, {
+          unlockCount: admin.firestore.FieldValue.increment(1),
+          lastUnlockAt: now,
+          recentUnlocks,
+          dailyUnlockDate: todayKey,
+          dailyUnlockCount
+        }, { merge: true });
+      });
     } catch (countError) {
       console.error('❌ Could not update unlock/trending count:', countError.message);
     }
@@ -1699,7 +1770,7 @@ app.post('/api/ad-complete', async (req, res) => {
 
     const userRef = db.collection('users').doc(userId);
     const dailyLimit = await getDailyAdLimit();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getDhakaDateKey();
     const result = await db.runTransaction(async tx => {
       const snap = await tx.get(userRef);
       const data = snap.exists ? snap.data() : {};
