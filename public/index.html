@@ -43,7 +43,7 @@ button{font:inherit}
   transition:opacity .45s ease,visibility .45s ease;
 }
 .splash.hide{opacity:0;visibility:hidden;pointer-events:none}
-.splash-inner{text-align:center;animation:splashIn .7s ease both}
+.splash-inner{text-align:center;animation:splashIn .1.5s ease both}
 .brand-mark{
   width:116px;height:116px;border-radius:30px;margin:0 auto 20px;
   display:grid;place-items:center;position:relative;overflow:hidden;
@@ -275,7 +275,7 @@ function startParam(){
 function showSplash(){
   if(splashShown) return;
   splashShown=true;
-  setTimeout(function(){ document.getElementById('splash').classList.add('hide'); },550);
+  setTimeout(function(){ document.getElementById('splash').classList.add('hide'); },1500);
 }
 
 document.getElementById('avatar').textContent=userName().charAt(0).toUpperCase();
