@@ -340,7 +340,7 @@ function renderHome(){
 }
 
 function bannerSrcDoc(){
-  return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;padding:0;background:transparent;overflow:hidden}body{width:320px;height:50px}</style></head><body><script>atOptions={key:'4dc6679ce824f94b241344f87e558204',format:'iframe',height:50,width:320,params:{}};<\/script><script src="https://www.highrevenueformat.com/4dc6679ce824f94b241344f87e558204/invoke.js"></script></body></html>';
+  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;padding:0;background:transparent;overflow:hidden}body{width:320px;height:50px}</style></head><body><script>atOptions={key:'4dc6679ce824f94b241344f87e558204',format:'iframe',height:50,width:320,params:{}};<\/script><script src="https://www.highrevenueformat.com/4dc6679ce824f94b241344f87e558204/invoke.js"><\/script></body></html>`;
 }
 function mountBanner(id){
   var box=document.getElementById(id); if(!box || box.dataset.loaded==='1') return;
