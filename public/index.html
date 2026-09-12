@@ -158,10 +158,9 @@ button{font:inherit}
 .empty{padding:40px 18px;text-align:center;color:var(--muted)}
 @media(min-width:600px){.topic-grid{grid-template-columns:1fr 1fr}.hero h1{font-size:38px}}
 
-.banner-wrap{width:100%;display:flex;justify-content:center;align-items:center;overflow:hidden;min-height:50px;margin:0 auto;}
-.banner-wrap iframe{max-width:320px;width:320px;height:50px;border:0;display:block;}
-.top-banner{padding:6px 0 2px;}
-.single-banner{padding:8px 0 2px;}
+.banner-wrap{width:100%;height:50px;display:flex;align-items:center;justify-content:center;overflow:hidden;margin:6px auto 8px;}
+.banner-wrap iframe{width:320px;height:50px;max-width:100%;border:0;display:block;}
+.single-banner{margin:12px auto 4px;}
 </style>
 </head>
 <body>
@@ -182,13 +181,7 @@ button{font:inherit}
     </header>
 
     <main id="homeView">
-      <div class="banner-wrap top-banner" id="topBanner">
-        <script>
-          atOptions = { 'key':'4dc6679ce824f94b241344f87e558204', 'format':'iframe', 'height':50, 'width':320, 'params':{} };
-        </script>
-        <script src="https://www.highrevenueformat.com/4dc6679ce824f94b241344f87e558204/invoke.js"></script>
-      </div>
-
+      <div class="banner-wrap" id="topBanner"></div>
       <section class="hero">
         <div class="eyebrow">Exclusive content</div>
         <h1>Watch what you want.</h1>
@@ -218,8 +211,8 @@ button{font:inherit}
           <div class="single-label">Private content</div>
         </div>
         <div id="singleContent"></div>
-      </section>
         <div class="banner-wrap single-banner" id="singleBanner"></div>
+      </section>
     </main>
   </div>
 
@@ -346,22 +339,25 @@ function renderHome(){
   });
 }
 
-function mountSingleBanner(){
-  var box=document.getElementById('singleBanner');
-  if(!box || box.dataset.loaded==='1') return;
+function bannerSrcDoc(){
+  return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;padding:0;background:transparent;overflow:hidden}body{width:320px;height:50px}</style></head><body><script>atOptions={key:'4dc6679ce824f94b241344f87e558204',format:'iframe',height:50,width:320,params:{}};<\/script><script src="https://www.highrevenueformat.com/4dc6679ce824f94b241344f87e558204/invoke.js"></script></body></html>';
+}
+function mountBanner(id){
+  var box=document.getElementById(id); if(!box || box.dataset.loaded==='1') return;
   box.dataset.loaded='1';
-  var s=document.createElement('script');
-  s.text='atOptions = { key:\'4dc6679ce824f94b241344f87e558204\', format:\'iframe\', height:50, width:320, params:{} };';
-  box.appendChild(s);
-  var js=document.createElement('script');
-  js.src='https://www.highrevenueformat.com/4dc6679ce824f94b241344f87e558204/invoke.js';
-  js.async=true;
-  box.appendChild(js);
+  var frame=document.createElement('iframe');
+  frame.width=320; frame.height=50; frame.loading='lazy'; frame.referrerPolicy='no-referrer-when-downgrade';
+  frame.setAttribute('sandbox','allow-scripts');
+  frame.srcdoc=bannerSrcDoc();
+  box.appendChild(frame);
+}
+function renderBanners(){
+  mountBanner('topBanner');
 }
 
 function renderSingle(topic){
   var topBanner=document.getElementById('topBanner'); if(topBanner) topBanner.style.display='none';
-  mountSingleBanner();
+  mountBanner('singleBanner');
   var home=document.getElementById('homeView'), single=document.getElementById('singleView');
   home.style.display='none'; single.style.display='block';
   var box=document.getElementById('singleContent');
@@ -490,16 +486,17 @@ async function recordAd(button){
       return;
     }
     if(!r.ok||!data.success)throw new Error(data.error||'failed');
+    if(data.requiresStart && data.startUrl){
+      isWatching=false;
+      if(tg && tg.openTelegramLink) tg.openTelegramLink(data.startUrl);
+      else window.location.href=data.startUrl;
+      return;
+    }
     adCount=Number(data.count)||0;
     totalAds=Number(data.required)||totalAds;
     if(button)button.textContent=data.unlocked?'CONTENT UNLOCKED':'UNLOCK CONTENT · '+adCount+'/'+totalAds;
     if(data.unlocked){
       isWatching=false;
-      if(data.requiresStart && data.startUrl){
-        if(tg && tg.openTelegramLink){ tg.openTelegramLink(data.startUrl); }
-        else { window.location.href=data.startUrl; }
-        return;
-      }
       await loadUnlocked();
       if(currentTopic)renderSingle(currentTopic);
       return;

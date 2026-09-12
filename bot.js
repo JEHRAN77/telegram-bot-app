@@ -423,32 +423,29 @@ bot.start(async (ctx) => {
     );
 
     // /start no longer forces channel join/verification.
-    // If the Mini App previously unlocked a topic for a brand-new user,
-    // deliver only that exact pending topic now that the user has started the bot.
+    // If this user unlocked a topic in the Mini App before starting the bot,
+    // deliver only that exact pending topic.
     const payload = String(ctx.startPayload || '').trim();
     const requestedTopicId = payload.startsWith('unlock_') ? payload.slice(7).trim() : '';
     const pendingTopicId = String(user.pendingUnlockTopicId || '').trim();
-    const topicId = pendingTopicId;
 
     if (requestedTopicId && pendingTopicId && requestedTopicId !== pendingTopicId) {
       return ctx.reply('❌ এই unlock request আর active নেই। Mini App থেকে আবার unlock করুন।');
     }
 
+    const topicId = pendingTopicId || requestedTopicId;
     if (topicId) {
-
       try {
-        const delivery = await deliverUnlockedTopic(userId, topicId);
-        if (delivery && delivery.success && !delivery.deliveryBlocked) {
-          await updateUser(userId, {
-            pendingUnlockTopicId: admin.firestore.FieldValue.delete(),
-            pendingUnlockAt: admin.firestore.FieldValue.delete()
-          });
-          return ctx.reply('🎬 আপনার unlocked video পাঠানো হয়েছে।');
-        }
+        await deliverUnlockedTopic(userId, topicId);
+        await updateUser(userId, {
+          pendingUnlockTopicId: admin.firestore.FieldValue.delete(),
+          pendingUnlockAt: admin.firestore.FieldValue.delete()
+        });
+        return ctx.reply('🎬 আপনার unlocked video পাঠানো হয়েছে।');
       } catch (deliveryError) {
         console.error('❌ Pending topic delivery error:', deliveryError.message);
+        return ctx.reply('❌ ভিডিও পাঠাতে সমস্যা হয়েছে। কিছুক্ষণ পরে আবার চেষ্টা করুন।');
       }
-      return ctx.reply('❌ ভিডিও পাঠাতে সমস্যা হয়েছে। কিছুক্ষণ পরে আবার চেষ্টা করুন।');
     }
 
     return ctx.reply(
@@ -1657,38 +1654,21 @@ async function deliverUnlockedTopic(userId, topicId) {
   }
 
   const videos = topicDoc.data().videos || [];
-  let deliveryBlocked = false;
-  let videosDelivered = 0;
   for (const videoId of videos) {
     try {
       const alreadySent = sentMessages.some(m => m.videoId === videoId && m.topicId === topicId && (now - m.sentAt) < THIRTY_MINUTES);
       if (alreadySent) continue;
-
-      // Do not use the 403-swallowing helper here. A 403 means this is a new
-      // user who has not started the bot yet, so we need the Start fallback.
-      const sentMsg = await bot.telegram.sendVideo(userId, videoId, {
+      // safeSendVideo uses 403-tolerant wrapper
+      const sentMsg = await safeSendVideo(userId, videoId, {
         protect_content: true,
         caption: '⏳ এই ভিডিও ৩০ মিনিট পর ডিলিট হয়ে যাবে।'
       });
       if (sentMsg) {
         sentMessages.push({ messageId: sentMsg.message_id, chatId: userId, videoId, topicId, sentAt: Date.now() });
-        videosDelivered++;
       }
     } catch (sendError) {
-      if (isBlockedError(sendError)) {
-        deliveryBlocked = true;
-        console.warn(`⚠️ Cannot start private chat with ${userId}; pending topic ${topicId} saved.`);
-        break;
-      }
       console.error(`❌ Error sending video:`, sendError.message);
     }
-  }
-
-  if (deliveryBlocked) {
-    await userRef.set({
-      pendingUnlockTopicId: topicId,
-      pendingUnlockAt: now
-    }, { merge: true });
   }
 
   sentMessages = sentMessages.filter(m => {
@@ -1704,7 +1684,7 @@ async function deliverUnlockedTopic(userId, topicId) {
     cleanupDueAt: cleanupDueAt || null
   }, { merge: true });
   invalidateTopicsCache();
-  return { success: true, videosDelivered, deliveryBlocked };
+  return { success: true, videosDelivered: videos.length };
 }
 
 app.post('/api/ad-complete', async (req, res) => {
@@ -1742,8 +1722,21 @@ app.post('/api/ad-complete', async (req, res) => {
     }
 
     if (result.unlocked) {
-      const delivery = await deliverUnlockedTopic(userId, topicId);
-      if (delivery.deliveryBlocked) {
+      // Telegram cannot start a private chat with a user who has never
+      // pressed Start. Detect that case before attempting delivery.
+      let chatAvailable = true;
+      try {
+        await bot.telegram.getChat(userId);
+      } catch (chatError) {
+        if (isBlockedError(chatError)) chatAvailable = false;
+        else throw chatError;
+      }
+
+      if (!chatAvailable) {
+        await userRef.set({
+          pendingUnlockTopicId: topicId,
+          pendingUnlockAt: Date.now()
+        }, { merge: true });
         const startUrl = BOT_USERNAME
           ? `https://t.me/${BOT_USERNAME}?start=unlock_${encodeURIComponent(topicId)}`
           : `https://t.me/${String(process.env.BOT_TOKEN || '')}`;
@@ -1756,6 +1749,8 @@ app.post('/api/ad-complete', async (req, res) => {
           startUrl
         });
       }
+
+      await deliverUnlockedTopic(userId, topicId);
       return res.json({ success: true, count: result.count, required: result.required, unlocked: true });
     }
 
