@@ -422,35 +422,40 @@ bot.start(async (ctx) => {
       ctx.from.last_name
     );
 
-    const allJoined = await checkAllChannels(ctx);
+    // /start no longer forces channel join/verification.
+    // If the Mini App previously unlocked a topic for a brand-new user,
+    // deliver only that exact pending topic now that the user has started the bot.
+    const payload = String(ctx.startPayload || '').trim();
+    const requestedTopicId = payload.startsWith('unlock_') ? payload.slice(7).trim() : '';
+    const pendingTopicId = String(user.pendingUnlockTopicId || '').trim();
+    const topicId = pendingTopicId;
 
-    if (allJoined) {
-      if (!user.verified) {
-        await updateUser(userId, { verified: true, verifiedAt: new Date().toISOString() });
+    if (requestedTopicId && pendingTopicId && requestedTopicId !== pendingTopicId) {
+      return ctx.reply('❌ এই unlock request আর active নেই। Mini App থেকে আবার unlock করুন।');
+    }
+
+    if (topicId) {
+
+      try {
+        const delivery = await deliverUnlockedTopic(userId, topicId);
+        if (delivery && delivery.success && !delivery.deliveryBlocked) {
+          await updateUser(userId, {
+            pendingUnlockTopicId: admin.firestore.FieldValue.delete(),
+            pendingUnlockAt: admin.firestore.FieldValue.delete()
+          });
+          return ctx.reply('🎬 আপনার unlocked video পাঠানো হয়েছে।');
+        }
+      } catch (deliveryError) {
+        console.error('❌ Pending topic delivery error:', deliveryError.message);
       }
-      return ctx.reply(
-        '✅ যাচাই সফল!',
-        Markup.inlineKeyboard([
-          Markup.button.webApp('🚀 Open App', MINI_APP_URL)
-        ])
-      );
+      return ctx.reply('❌ ভিডিও পাঠাতে সমস্যা হয়েছে। কিছুক্ষণ পরে আবার চেষ্টা করুন।');
     }
 
-    if (user.verified) {
-      await updateUser(userId, { verified: false });
-    }
-
-    const channelButtons = REQUIRED_CHANNELS.map(channel => {
-      const cleanId = channel.startsWith('-100') ? channel : channel.replace('@', '');
-      const link = channel.startsWith('-100')
-        ? `https://t.me/c/${cleanId.replace('-100', '')}`
-        : `https://t.me/${cleanId}`;
-      return [Markup.button.url(`📢 চ্যানেল জয়েন করুন`, link)];
-    });
-    channelButtons.push([Markup.button.callback('✅ I\'ve Joined', 'verify_join')]);
-    await ctx.reply(
-      '⚠️ ভিডিও দেখার জন্য চ্যানেলটি জয়েন করুন:\n\nচ্যানেল জয়েন করে "✅ I\'ve Joined" বাটনে ক্লিক করুন',
-      Markup.inlineKeyboard(channelButtons)
+    return ctx.reply(
+      '👋 স্বাগতম! আপনার ভিডিও দেখতে নিচের বাটনে ক্লিক করুন।',
+      Markup.inlineKeyboard([
+        Markup.button.webApp('🚀 Open App', MINI_APP_URL)
+      ])
     );
   } catch (error) {
     console.error('Error in start command:', error);
@@ -1652,21 +1657,38 @@ async function deliverUnlockedTopic(userId, topicId) {
   }
 
   const videos = topicDoc.data().videos || [];
+  let deliveryBlocked = false;
+  let videosDelivered = 0;
   for (const videoId of videos) {
     try {
       const alreadySent = sentMessages.some(m => m.videoId === videoId && m.topicId === topicId && (now - m.sentAt) < THIRTY_MINUTES);
       if (alreadySent) continue;
-      // safeSendVideo uses 403-tolerant wrapper
-      const sentMsg = await safeSendVideo(userId, videoId, {
+
+      // Do not use the 403-swallowing helper here. A 403 means this is a new
+      // user who has not started the bot yet, so we need the Start fallback.
+      const sentMsg = await bot.telegram.sendVideo(userId, videoId, {
         protect_content: true,
         caption: '⏳ এই ভিডিও ৩০ মিনিট পর ডিলিট হয়ে যাবে।'
       });
       if (sentMsg) {
         sentMessages.push({ messageId: sentMsg.message_id, chatId: userId, videoId, topicId, sentAt: Date.now() });
+        videosDelivered++;
       }
     } catch (sendError) {
+      if (isBlockedError(sendError)) {
+        deliveryBlocked = true;
+        console.warn(`⚠️ Cannot start private chat with ${userId}; pending topic ${topicId} saved.`);
+        break;
+      }
       console.error(`❌ Error sending video:`, sendError.message);
     }
+  }
+
+  if (deliveryBlocked) {
+    await userRef.set({
+      pendingUnlockTopicId: topicId,
+      pendingUnlockAt: now
+    }, { merge: true });
   }
 
   sentMessages = sentMessages.filter(m => {
@@ -1682,7 +1704,7 @@ async function deliverUnlockedTopic(userId, topicId) {
     cleanupDueAt: cleanupDueAt || null
   }, { merge: true });
   invalidateTopicsCache();
-  return { success: true, videosDelivered: videos.length };
+  return { success: true, videosDelivered, deliveryBlocked };
 }
 
 app.post('/api/ad-complete', async (req, res) => {
@@ -1720,7 +1742,20 @@ app.post('/api/ad-complete', async (req, res) => {
     }
 
     if (result.unlocked) {
-      await deliverUnlockedTopic(userId, topicId);
+      const delivery = await deliverUnlockedTopic(userId, topicId);
+      if (delivery.deliveryBlocked) {
+        const startUrl = BOT_USERNAME
+          ? `https://t.me/${BOT_USERNAME}?start=unlock_${encodeURIComponent(topicId)}`
+          : `https://t.me/${String(process.env.BOT_TOKEN || '')}`;
+        return res.json({
+          success: true,
+          count: result.count,
+          required: result.required,
+          unlocked: true,
+          requiresStart: true,
+          startUrl
+        });
+      }
       return res.json({ success: true, count: result.count, required: result.required, unlocked: true });
     }
 
