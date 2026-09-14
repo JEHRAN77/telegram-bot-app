@@ -289,12 +289,14 @@ let updateAdsData = {};
 let renameData = {};
 let thumbnailData = {};
 let postData = {};
+let adminChannelData = {};
+let adminButtonData = {};
 
 // Isolate admin workflows. Add Video/Topic always has priority over /post.
 function clearAdminWorkflow(userId) {
   delete postData[userId];
   delete broadcastData[userId];
-  if (typeof adminChannelData !== 'undefined') delete adminChannelData[userId];
+  delete adminChannelData[userId];
   delete adminButtonData[userId];
   delete updateAdsData[userId];
   delete renameData[userId];
@@ -1175,7 +1177,8 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
   if (action === 'buttons') {
     const bs=await getPostButtons();
     const rows=bs.map((b,i)=>[Markup.button.callback(`${i+1}. ${String(b.name).slice(0,25)}`,'ab_edit:'+i),Markup.button.callback('🗑️','ab_del:'+i)]);
-    rows.push([Markup.button.callback('➕ Add Button','ab_add')],[Markup.button.callback('⬅️ Back','adm_home')]);
+    rows.push([Markup.button.callback('➕ Add Button','ab_add')]);
+  rows.push([Markup.button.callback('⬅️ Back','adm_home')]);
     return ctx.editMessageText('🔘 POST BUTTON MANAGER\n\nএই saved buttons নতুন post-এ automatic থাকবে।',Markup.inlineKeyboard(rows));
   }
   } catch (error) {
