@@ -1089,7 +1089,7 @@ bot.command('admin', async (ctx) => {
 bot.action(/^adm_(.+)$/, async (ctx) => {
   if (!adminOnly(ctx)) return ctx.answerCbQuery('❌ অনুমতি নেই');
   const action = ctx.match[1];
-  await ctx.answerCbQuery();
+  try { await ctx.answerCbQuery(); } catch (e) {}
   if (action === 'home') return sendAdminPanel(ctx, true);
   if (action === 'videos') {
     return ctx.editMessageText('🎬 VIDEO MANAGEMENT\n\nপ্রয়োজনীয় কাজগুলো এখান থেকেই করুন:', Markup.inlineKeyboard([
@@ -1098,8 +1098,8 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
       [Markup.button.callback('⬅️ Back', 'adm_home')]
     ]));
   }
-  if (action === 'add_video') { startAddVideoWorkflow(ctx.from.id); await ctx.answerCbQuery('Add Video'); return ctx.reply('📹 ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)।\n\n⚠️ এটি Channel Post নয়। আগে ভিডিও, তারপর Title → Thumbnail → Ads Count দিন।'); }
-  if (action === 'add_topic') { startAddTopicWorkflow(ctx.from.id); await ctx.answerCbQuery('Add Topic'); return ctx.reply('📹 প্রথম ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)।\n\n⚠️ এটি Channel Post নয়। ভিডিওগুলো শেষে /done দিন, তারপর Title → Thumbnail → Ads Count।'); }
+  if (action === 'add_video') { startAddVideoWorkflow(ctx.from.id); return ctx.reply('📹 ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)।\n\n⚠️ এটি Channel Post নয়। আগে ভিডিও, তারপর Title → Thumbnail → Ads Count দিন।'); }
+  if (action === 'add_topic') { startAddTopicWorkflow(ctx.from.id); return ctx.reply('📹 প্রথম ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)।\n\n⚠️ এটি Channel Post নয়। ভিডিওগুলো শেষে /done দিন, তারপর Title → Thumbnail → Ads Count।'); }
   if (action === 'list') {
     const topics = await getTopicsCached();
     if (!topics.length) return ctx.reply('📭 এখনো কোনো Video/Topic নেই।');
