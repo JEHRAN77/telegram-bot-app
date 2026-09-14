@@ -1228,7 +1228,7 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
     if (!topics.length) return ctx.reply('📭 কোনো Video/Topic নেই।');
     const rows = [];
     topics.forEach((t, i) => {
-      rows.push([{ text: `${i + 1}. ${String(t.title || 'নামবিহীন').slice(0, 35)}`, copy_text: { text: String(t.id) } }]);
+      rows.push([Markup.button.callback(`${i + 1}. ${String(t.title || 'নামবিহীন').slice(0, 35)}`, `vid_copy:${t.id}`)]);
     });
     rows.push([Markup.button.callback('⬅️ Back', 'adm_videos')]);
     return ctx.reply('🆔 VIDEO/TOPIC IDS\n\nনিচের ID button-এ click করলে ID copy হবে।', Markup.inlineKeyboard(rows));
@@ -1315,6 +1315,13 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
     try { await ctx.answerCbQuery('❌ কাজটি করা যায়নি'); } catch (e) {}
     return ctx.reply('❌ Admin action-এ সমস্যা হয়েছে।\n\n' + (error.message || 'Unknown error'));
   }
+});
+
+bot.action(/^vid_copy:(.+)$/, async ctx=>{
+  if(!adminOnly(ctx)) return ctx.answerCbQuery('❌ অনুমতি নেই');
+  const id=String(ctx.match[1]);
+  await ctx.answerCbQuery('ID দেখানো হয়েছে');
+  return ctx.reply(`🆔 Video/Topic ID\n\n<code>${id}</code>\n\nউপরের ID-তে tap/hold করে Copy করুন।`, { parse_mode: 'HTML' });
 });
 
 // Video detail/actions
