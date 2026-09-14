@@ -363,7 +363,7 @@ function renderHome(){
       ? '<button class="card-btn unlocked" disabled>CONTENT UNLOCKED</button>'
       : dailyLimitReached
         ? '<button class="card-btn" disabled>আজকের Ad Limit শেষ</button>'
-        : '<button class="card-btn unlock-card" data-id="'+id+'">UNLOCK CONTENT · '+ads+'</button>';
+        : '<button class="card-btn unlock-card" data-id="'+id+'">(0/'+ads+') Ads</button>';
 
     var card=document.createElement('article');
     card.className='topic-card';
@@ -399,7 +399,7 @@ function renderSingle(topic){
     ? '<button id="singleUnlock" class="unlock-btn unlocked" disabled>CONTENT UNLOCKED</button>'
     : dailyLimitReached
       ? '<button id="singleUnlock" class="unlock-btn" disabled>আজকের Ad Limit শেষ</button>'
-      : '<button id="singleUnlock" class="unlock-btn">UNLOCK CONTENT · '+ads+'</button>';
+      : '<button id="singleUnlock" class="unlock-btn">(0/'+ads+') Ads</button>';
 
   box.innerHTML=
     '<article class="single-card">'+
@@ -523,7 +523,7 @@ async function recordAd(button){
     }
     adCount=Number(data.count)||0;
     totalAds=Number(data.required)||totalAds;
-    if(button)button.textContent=data.unlocked?'CONTENT UNLOCKED':'UNLOCK CONTENT · '+adCount+'/'+totalAds;
+    if(button)button.textContent=data.unlocked?'CONTENT UNLOCKED':'('+adCount+'/'+totalAds+') Ads';
     if(data.unlocked){
       isWatching=false;
       await loadUnlocked();
@@ -544,7 +544,7 @@ function resetAd(){
   if(currentTopic){
     var b=document.getElementById('singleUnlock');
     if(b&&!unlocked[currentTopic.id]&&!dailyLimitReached){
-      b.disabled=false;b.textContent='UNLOCK CONTENT · '+totalAds;
+      b.disabled=false;b.textContent='(0/'+totalAds+') Ads';
     }
     renderHome();
   }

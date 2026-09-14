@@ -294,7 +294,7 @@ let postData = {};
 function clearAdminWorkflow(userId) {
   delete postData[userId];
   delete broadcastData[userId];
-  delete adminChannelData[userId];
+  if (typeof adminChannelData !== 'undefined') delete adminChannelData[userId];
   delete adminButtonData[userId];
   delete updateAdsData[userId];
   delete renameData[userId];
