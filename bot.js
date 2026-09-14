@@ -1226,12 +1226,15 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
   if (action === 'video_ids') {
     const topics = await getTopicsCached();
     if (!topics.length) return ctx.reply('📭 কোনো Video/Topic নেই।');
-    const rows = [];
+
+    // Same ID format as /list: Telegram <code> text can be tapped/held to copy.
+    let message = '🆔 VIDEO/TOPIC IDS\n\n';
     topics.forEach((t, i) => {
-      rows.push([Markup.button.callback(`${i + 1}. ${String(t.title || 'নামবিহীন').slice(0, 35)}`, `vid_copy:${t.id}`)]);
+      message += `📌 ${t.title || 'নামবিহীন'}\n`;
+      message += `   🆔 <code>${String(t.id)}</code>\n\n`;
     });
-    rows.push([Markup.button.callback('⬅️ Back', 'adm_videos')]);
-    return ctx.reply('🆔 VIDEO/TOPIC IDS\n\nনিচের ID button-এ click করলে ID copy হবে।', Markup.inlineKeyboard(rows));
+
+    return ctx.reply(message, { parse_mode: 'HTML' });
   }
   if (action === 'video_rename') {
     renameData[ctx.from.id] = { step: 'id' };
@@ -1317,12 +1320,7 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
   }
 });
 
-bot.action(/^vid_copy:(.+)$/, async ctx=>{
-  if(!adminOnly(ctx)) return ctx.answerCbQuery('❌ অনুমতি নেই');
-  const id=String(ctx.match[1]);
-  await ctx.answerCbQuery('ID দেখানো হয়েছে');
-  return ctx.reply(`🆔 Video/Topic ID\n\n<code>${id}</code>\n\nউপরের ID-তে tap/hold করে Copy করুন।`, { parse_mode: 'HTML' });
-});
+
 
 // Video detail/actions
 bot.action(/^aview:(.+)$/, async ctx=>{
