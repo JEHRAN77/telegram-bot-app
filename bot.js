@@ -1202,15 +1202,12 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
   try {
   if (action === 'home') return sendAdminPanel(ctx, true);
   if (action === 'videos') {
-    return ctx.editMessageText('🎬 VIDEO MANAGEMENT\n\nপ্রতিটি কাজ আলাদা Button থেকে করুন:', Markup.inlineKeyboard([
+    return ctx.editMessageText('🎬 VIDEO MANAGEMENT\n\nএখানে শুধু Video/Topic-এর নিজস্ব management থাকবে।\nPost ও Ads আলাদা Admin menu থেকে করা যাবে।', Markup.inlineKeyboard([
       [Markup.button.callback('➕ Add Video', 'adm_add_video'), Markup.button.callback('📚 Add Topic', 'adm_add_topic')],
       [Markup.button.callback('🆔 Video IDs', 'adm_video_ids')],
       [Markup.button.callback('✏️ Rename / Title', 'adm_video_rename')],
       [Markup.button.callback('🖼️ Thumbnail Edit', 'adm_video_thumb')],
-      [Markup.button.callback('🎯 Ads Edit', 'adm_video_ads')],
-      [Markup.button.callback('📤 Post Video', 'adm_video_post')],
       [Markup.button.callback('🗑️ Delete Video', 'adm_video_delete')],
-      [Markup.button.callback('📋 All Videos', 'adm_list')],
       [Markup.button.callback('⬅️ Back', 'adm_home')]
     ]));
   }
@@ -1229,8 +1226,12 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
   if (action === 'video_ids') {
     const topics = await getTopicsCached();
     if (!topics.length) return ctx.reply('📭 কোনো Video/Topic নেই।');
-    const lines = topics.map((t, i) => `${i + 1}. ${String(t.title || 'নামবিহীন')}\n🆔 ${t.id}`);
-    return ctx.reply(`🆔 VIDEO/TOPIC IDS\n\n${lines.join('\n\n')}\n\nএই ID কপি করে Rename / Thumbnail / Ads / Post / Delete-এ ব্যবহার করুন.`, Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'adm_videos')]]));
+    const rows = [];
+    topics.forEach((t, i) => {
+      rows.push([Markup.button.copyText(`${i + 1}. ${String(t.title || 'নামবিহীন').slice(0, 35)}`, String(t.id))]);
+    });
+    rows.push([Markup.button.callback('⬅️ Back', 'adm_videos')]);
+    return ctx.reply('🆔 VIDEO/TOPIC IDS\n\nনিচের ID button-এ click করলে ID copy হবে।', Markup.inlineKeyboard(rows));
   }
   if (action === 'video_rename') {
     renameData[ctx.from.id] = { step: 'id' };
