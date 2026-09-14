@@ -245,6 +245,7 @@ try { tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : 
 var API='/api';
 var topics=[];
 var unlocked={};
+var userHistory=[];
 var activeCategory='all';
 var dailyLimitReached=false;
 var currentTopic=null;
@@ -282,11 +283,49 @@ document.getElementById('avatar').textContent=userName().charAt(0).toUpperCase()
 
 function timeOf(t){var x=t&&t.createdAt?new Date(t.createdAt).getTime():0;return Number.isFinite(x)?x:0}
 function viewsOf(t){return Math.max(0,Number(t&&t.unlockCount)||0)}
-function progressOf(t){return Math.max(0,Number((window.adProgress||{})[t&&t.id])||0)}
 function recentOf(t){
   var list=Array.isArray(t&&t.recentUnlocks)?t.recentUnlocks:[];
   var cut=Date.now()-7*86400000;
   return list.reduce(function(n,v){var x=typeof v==='number'?v:new Date(v).getTime();return n+(Number.isFinite(x)&&x>=cut?1:0)},0)
+}
+function hashString(str){
+  var h=2166136261;
+  for(var i=0;i<str.length;i++){h^=str.charCodeAt(i);h+=((h<<1)+(h<<4)+(h<<7)+(h<<8)+(h<<24));}
+  return (h>>>0);
+}
+function seededScore(key){return (hashString(String(key))%10000)/10000;}
+function titleTokens(text){
+  var stop={the:1,and:1,for:1,with:1,this:1,that:1,video:1,ভিডিও:1,এর:1,এবং:1,একটি:1,এই:1,ও:1};
+  return String(text||'').toLowerCase().replace(/[^a-z0-9\u0980-\u09ff]+/g,' ').split(/\s+/).filter(function(x){return x.length>1&&!stop[x]});
+}
+function personalizedScore(t,index){
+  var uid=userId()||'guest';
+  var today=new Date().toISOString().slice(0,10);
+  var active=!!unlocked[t.id];
+  var historyIds={}; userHistory.forEach(function(id){historyIds[String(id)]=true});
+  var score=0;
+  if(!historyIds[String(t.id)]) score+=48; else score-=24;
+  if(active) score-=1000;
+  var age=Math.max(0,Date.now()-timeOf(t));
+  if(age<24*3600000) score+=30;
+  else if(age<72*3600000) score+=15;
+  else if(age<7*86400000) score+=6;
+  score+=Math.min(22,Math.log1p(viewsOf(t))*3.2);
+
+  var historyTitles=[];
+  userHistory.forEach(function(id){
+    var ht=topics.find(function(x){return String(x.id)===String(id)});
+    if(ht) historyTitles.push(ht.title||'');
+  });
+  var pref={}; historyTitles.forEach(function(title){titleTokens(title).forEach(function(tok){pref[tok]=(pref[tok]||0)+1;});});
+  var tt=titleTokens(t.title), overlap=0;
+  tt.forEach(function(tok){if(pref[tok]) overlap+=Math.min(4,pref[tok]);});
+  score+=Math.min(24,overlap*6);
+
+  // Small deterministic daily rotation prevents the All tab from feeling static.
+  score+=seededScore(uid+'|'+today+'|'+t.id)*8;
+  score+=Math.max(0,8-index*0.08);
+  return score;
 }
 function sortTopics(){
   var a=topics.slice();
@@ -300,11 +339,7 @@ function sortTopics(){
   }else if(activeCategory==='new'){
     a.sort(function(x,y){return timeOf(y)-timeOf(x)}); a=a.slice(0,20);
   }else{
-    a.sort(function(x,y){
-      var ox=Number.isFinite(Number(x.sortOrder))?Number(x.sortOrder):timeOf(x);
-      var oy=Number.isFinite(Number(y.sortOrder))?Number(y.sortOrder):timeOf(y);
-      return oy-ox||timeOf(y)-timeOf(x);
-    });
+    a.sort(function(x,y){return personalizedScore(y,a.indexOf(y))-personalizedScore(x,a.indexOf(x));});
   }
   return a;
 }
@@ -321,7 +356,6 @@ function renderHome(){
     var count=Math.max(1,Number(t.videoCount)||0);
     var views=viewsOf(t);
     var ads=Math.max(1,Number(t.adsRequired)||1);
-    var progress=Math.min(ads,progressOf(t));
     var isUnlocked=!!unlocked[t.id];
     var thumb=t.thumbnail ? API+'/thumbnail/'+encodeURIComponent(t.thumbnail) : '';
     var img=thumb ? '<img src="'+thumb+'" alt="'+title+'" loading="'+(i<4?'eager':'lazy')+'" decoding="async" onerror="this.style.display=\'none\'">' : '';
@@ -329,7 +363,7 @@ function renderHome(){
       ? '<button class="card-btn unlocked" disabled>CONTENT UNLOCKED</button>'
       : dailyLimitReached
         ? '<button class="card-btn" disabled>আজকের Ad Limit শেষ</button>'
-        : '<button class="card-btn unlock-card" data-id="'+id+'">UNLOCK CONTENT · ('+progress+'/'+ads+') Ads</button>';
+        : '<button class="card-btn unlock-card" data-id="'+id+'">UNLOCK CONTENT · '+ads+'</button>';
 
     var card=document.createElement('article');
     card.className='topic-card';
@@ -358,7 +392,6 @@ function renderSingle(topic){
   var id=String(topic.id), title=esc(topic.title||'নামবিহীন ভিডিও');
   var count=Math.max(1,Number(topic.videoCount)||0);
   var views=viewsOf(topic), ads=Math.max(1,Number(topic.adsRequired)||1);
-  var progress=Math.min(ads,progressOf(topic));
   var thumb=topic.thumbnail ? API+'/thumbnail/'+encodeURIComponent(topic.thumbnail) : '';
   var img=thumb ? '<img src="'+thumb+'" alt="'+title+'">' : '';
   var unlockedNow=!!unlocked[id];
@@ -366,7 +399,7 @@ function renderSingle(topic){
     ? '<button id="singleUnlock" class="unlock-btn unlocked" disabled>CONTENT UNLOCKED</button>'
     : dailyLimitReached
       ? '<button id="singleUnlock" class="unlock-btn" disabled>আজকের Ad Limit শেষ</button>'
-      : '<button id="singleUnlock" class="unlock-btn">UNLOCK CONTENT · ('+progress+'/'+ads+') Ads</button>';
+      : '<button id="singleUnlock" class="unlock-btn">UNLOCK CONTENT · '+ads+'</button>';
 
   box.innerHTML=
     '<article class="single-card">'+
@@ -422,9 +455,10 @@ function loadUnlocked(){
     .then(function(r){if(!r.ok)throw new Error('status');return r.json()})
     .then(function(data){
       dailyLimitReached=Number(data.dailyUsed||0)>=Number(data.dailyLimit||15);
-      window.adProgress=Object.assign({},data.adProgress||{});
       unlocked={};
       (data.topics||[]).forEach(function(id){unlocked[id]=true});
+      userHistory=Array.isArray(data.history)?data.history:(data.topics||[]);
+      window.adProgress=Object.assign({},data.adProgress||{});
       renderHome();
       if(currentTopic) renderSingle(currentTopic);
     }).catch(function(){renderHome()});
@@ -444,8 +478,7 @@ function startAds(topic,button){
   if(dailyLimitReached) return;
   currentTopic=topic;
   totalAds=Math.max(1,parseInt(topic.adsRequired,10)||1);
-  adCount=Math.min(totalAds,progressOf(topic));
-  isWatching=true;adCompleted=false;
+  adCount=0;isWatching=true;adCompleted=false;
   if(button){button.disabled=true;button.textContent='Preparing Ad…';}
   var overlay=document.getElementById('ad-overlay');
   overlay.classList.add('show');
@@ -490,9 +523,7 @@ async function recordAd(button){
     }
     adCount=Number(data.count)||0;
     totalAds=Number(data.required)||totalAds;
-    window.adProgress=window.adProgress||{};
-    window.adProgress[currentTopic.id]=adCount;
-    if(button)button.textContent=data.unlocked?'CONTENT UNLOCKED':'UNLOCK CONTENT · ('+adCount+'/'+totalAds+') Ads';
+    if(button)button.textContent=data.unlocked?'CONTENT UNLOCKED':'UNLOCK CONTENT · '+adCount+'/'+totalAds;
     if(data.unlocked){
       isWatching=false;
       await loadUnlocked();
@@ -513,7 +544,7 @@ function resetAd(){
   if(currentTopic){
     var b=document.getElementById('singleUnlock');
     if(b&&!unlocked[currentTopic.id]&&!dailyLimitReached){
-      b.disabled=false;b.textContent='UNLOCK CONTENT · ('+Math.min(totalAds,progressOf(currentTopic))+'/'+totalAds+') Ads';
+      b.disabled=false;b.textContent='UNLOCK CONTENT · '+totalAds;
     }
     renderHome();
   }

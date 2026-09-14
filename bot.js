@@ -643,21 +643,39 @@ bot.action('verify_join', async (ctx) => {
 // 📹 /addvideo, /addtopic
 // =============================================
 
-bot.command('addvideo', async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) {
-    return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+async function handleAddVideoCommand(ctx) {
+  try {
+    if (!ctx.from || ctx.from.id !== ADMIN_ID) {
+      return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+    }
+    startAddVideoWorkflow(ctx.from.id);
+    console.log('👑 Add Video workflow started:', ctx.from.id);
+    return ctx.reply('📹 ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)।\n\n➡️ তারপর: Title → Thumbnail → Ads Count → Save');
+  } catch (error) {
+    console.error('❌ /addvideo error:', error);
+    return ctx.reply('❌ Add Video শুরু করতে সমস্যা হয়েছে: ' + error.message).catch(() => {});
   }
-  startAddVideoWorkflow(ctx.from.id);
-  await ctx.reply('📹 ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)');
-});
+}
 
-bot.command('addtopic', async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) {
-    return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+async function handleAddTopicCommand(ctx) {
+  try {
+    if (!ctx.from || ctx.from.id !== ADMIN_ID) {
+      return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+    }
+    startAddTopicWorkflow(ctx.from.id);
+    console.log('👑 Add Topic workflow started:', ctx.from.id);
+    return ctx.reply('📹 প্রথম ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)।\n\n➡️ আরও ভিডিও পাঠান → /done → Title → Thumbnail → Ads Count → Save');
+  } catch (error) {
+    console.error('❌ /addtopic error:', error);
+    return ctx.reply('❌ Add Topic শুরু করতে সমস্যা হয়েছে: ' + error.message).catch(() => {});
   }
-  startAddTopicWorkflow(ctx.from.id);
-  await ctx.reply('📹 প্রথম ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)');
-});
+}
+
+bot.command('addvideo', handleAddVideoCommand);
+bot.command('addtopic', handleAddTopicCommand);
+// Fallback for clients/updates where command middleware does not match the command entity.
+bot.hears(/^\/addvideo(?:@[^\s]+)?$/i, handleAddVideoCommand);
+bot.hears(/^\/addtopic(?:@[^\s]+)?$/i, handleAddTopicCommand);
 
 bot.on('video', async (ctx) => {
   const userId = ctx.from.id;
@@ -1089,7 +1107,9 @@ bot.command('admin', async (ctx) => {
 bot.action(/^adm_(.+)$/, async (ctx) => {
   if (!adminOnly(ctx)) return ctx.answerCbQuery('❌ অনুমতি নেই');
   const action = ctx.match[1];
+  console.log('👑 Admin button:', action, 'by', ctx.from && ctx.from.id);
   try { await ctx.answerCbQuery(); } catch (e) {}
+  try {
   if (action === 'home') return sendAdminPanel(ctx, true);
   if (action === 'videos') {
     return ctx.editMessageText('🎬 VIDEO MANAGEMENT\n\nপ্রয়োজনীয় কাজগুলো এখান থেকেই করুন:', Markup.inlineKeyboard([
@@ -1157,6 +1177,11 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
     const rows=bs.map((b,i)=>[Markup.button.callback(`${i+1}. ${String(b.name).slice(0,25)}`,'ab_edit:'+i),Markup.button.callback('🗑️','ab_del:'+i)]);
     rows.push([Markup.button.callback('➕ Add Button','ab_add')],[Markup.button.callback('⬅️ Back','adm_home')]);
     return ctx.editMessageText('🔘 POST BUTTON MANAGER\n\nএই saved buttons নতুন post-এ automatic থাকবে।',Markup.inlineKeyboard(rows));
+  }
+  } catch (error) {
+    console.error('❌ Admin button error [' + action + ']:', error);
+    try { await ctx.answerCbQuery('❌ কাজটি করা যায়নি'); } catch (e) {}
+    return ctx.reply('❌ Admin action-এ সমস্যা হয়েছে।\n\n' + (error.message || 'Unknown error'));
   }
 });
 
@@ -1943,7 +1968,14 @@ app.get('/api/user-unlocked/:userId', async (req, res) => {
     const today = getDhakaDateKey();
     const dailyUsed = data.dailyAdDate === today ? (Number(data.dailyAdsUsed) || 0) : 0;
     const dailyLimit = await getDailyAdLimit();
-    res.json({ topics: activeUnlocked, expiresAt, dailyLimit, dailyUsed });
+    res.json({
+      topics: activeUnlocked,
+      history: unlockedTopics,
+      expiresAt,
+      adProgress: data.adProgress || {},
+      dailyLimit,
+      dailyUsed
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
