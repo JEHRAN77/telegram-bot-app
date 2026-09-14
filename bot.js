@@ -1658,6 +1658,7 @@ app.get('/api/user-unlocked/:userId', async (req, res) => {
       return res.json({ topics: [] });
     }
     const data = doc.data();
+    const adProgress = data.adProgress || {};
     const unlockedTopics = data.unlockedTopics || [];
     const topicUnlockTime = data.topicUnlockTime || {};
     const now = Date.now();
@@ -1672,7 +1673,7 @@ app.get('/api/user-unlocked/:userId', async (req, res) => {
     const today = getDhakaDateKey();
     const dailyUsed = data.dailyAdDate === today ? (Number(data.dailyAdsUsed) || 0) : 0;
     const dailyLimit = await getDailyAdLimit();
-    res.json({ topics: activeUnlocked, expiresAt, dailyLimit, dailyUsed });
+    res.json({ topics: activeUnlocked, expiresAt, adProgress, dailyLimit, dailyUsed });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
