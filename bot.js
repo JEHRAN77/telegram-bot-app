@@ -1228,7 +1228,7 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
     if (!topics.length) return ctx.reply('📭 কোনো Video/Topic নেই।');
     const rows = [];
     topics.forEach((t, i) => {
-      rows.push([Markup.button.copyText(`${i + 1}. ${String(t.title || 'নামবিহীন').slice(0, 35)}`, String(t.id))]);
+      rows.push([{ text: `${i + 1}. ${String(t.title || 'নামবিহীন').slice(0, 35)}`, copy_text: { text: String(t.id) } }]);
     });
     rows.push([Markup.button.callback('⬅️ Back', 'adm_videos')]);
     return ctx.reply('🆔 VIDEO/TOPIC IDS\n\nনিচের ID button-এ click করলে ID copy হবে।', Markup.inlineKeyboard(rows));
