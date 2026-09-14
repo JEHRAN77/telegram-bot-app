@@ -555,6 +555,10 @@ bot.start(async (ctx) => {
       ctx.from.last_name
     );
 
+    // Mark that this user has started the bot at least once.
+    // Existing users can receive unlocked videos directly without another /start.
+    await updateUser(userId, { botStarted: true });
+
     // /start no longer forces channel join/verification.
     // If this user unlocked a topic in the Mini App before starting the bot,
     // deliver only that exact pending topic.
@@ -583,12 +587,7 @@ bot.start(async (ctx) => {
           pendingUnlockTopicId: admin.firestore.FieldValue.delete(),
           pendingUnlockAt: admin.firestore.FieldValue.delete()
         });
-        return ctx.reply(
-          '🎬 আপনার ভিডিও আনলক হয়েছে!\nআরও ভিডিও দেখতে নিচের বাটনে ক্লিক করুন।',
-          Markup.inlineKeyboard([
-            [Markup.button.url('🎬 আরও ভিডিও দেখুন', MINI_APP_URL)]
-          ])
-        );
+        return ctx.reply('🎬 আপনার unlocked video পাঠানো হয়েছে।');
       } catch (deliveryError) {
         console.error('❌ Pending topic delivery error:', deliveryError.message);
         return ctx.reply('❌ ভিডিও পাঠাতে সমস্যা হয়েছে। কিছুক্ষণ পরে আবার চেষ্টা করুন।');
@@ -2104,9 +2103,32 @@ app.post('/api/ad-complete', async (req, res) => {
     }
 
     if (result.unlocked) {
-      // Always hand the user off to the Telegram bot after unlock.
-      // The deep-link carries the exact topic ID. The bot's /start handler
-      // then delivers that topic for both new and existing users.
+      // If the user has already started the bot, deliver the exact topic
+      // directly. Do NOT redirect through another /start deep-link.
+      const userSnap = await userRef.get();
+      const userData = userSnap.exists ? (userSnap.data() || {}) : {};
+
+      if (userData.botStarted === true) {
+        try {
+          await deliverUnlockedTopic(userId, topicId);
+          return res.json({
+            success: true,
+            count: result.count,
+            required: result.required,
+            unlocked: true,
+            directDelivered: true
+          });
+        } catch (deliveryError) {
+          console.error('❌ Direct topic delivery error:', deliveryError.message);
+          return res.status(500).json({
+            success: false,
+            error: 'ভিডিও পাঠাতে সমস্যা হয়েছে।'
+          });
+        }
+      }
+
+      // New user: first unlock still goes to the bot and uses /start once
+      // so Telegram can establish the bot chat.
       if (!BOT_USERNAME) {
         return res.status(500).json({
           success: false,
