@@ -2099,36 +2099,30 @@ app.post('/api/ad-complete', async (req, res) => {
     }
 
     if (result.unlocked) {
-      // Telegram cannot start a private chat with a user who has never
-      // pressed Start. Detect that case before attempting delivery.
-      let chatAvailable = true;
-      try {
-        await bot.telegram.getChat(userId);
-      } catch (chatError) {
-        if (isBlockedError(chatError)) chatAvailable = false;
-        else throw chatError;
-      }
-
-      if (!chatAvailable) {
-        await userRef.set({
-          pendingUnlockTopicId: topicId,
-          pendingUnlockAt: Date.now()
-        }, { merge: true });
-        const startUrl = BOT_USERNAME
-          ? `https://t.me/${BOT_USERNAME}?start=unlock_${encodeURIComponent(topicId)}`
-          : `https://t.me/${String(process.env.BOT_TOKEN || '')}`;
-        return res.json({
-          success: true,
-          count: result.count,
-          required: result.required,
-          unlocked: true,
-          requiresStart: true,
-          startUrl
+      // Always hand the user off to the Telegram bot after unlock.
+      // The deep-link carries the exact topic ID. The bot's /start handler
+      // then delivers that topic for both new and existing users.
+      if (!BOT_USERNAME) {
+        return res.status(500).json({
+          success: false,
+          error: 'BOT_USERNAME is not configured on the server.'
         });
       }
 
-      await deliverUnlockedTopic(userId, topicId);
-      return res.json({ success: true, count: result.count, required: result.required, unlocked: true });
+      await userRef.set({
+        pendingUnlockTopicId: topicId,
+        pendingUnlockAt: Date.now()
+      }, { merge: true });
+
+      const startUrl = `https://t.me/${BOT_USERNAME}?start=unlock_${encodeURIComponent(topicId)}`;
+      return res.json({
+        success: true,
+        count: result.count,
+        required: result.required,
+        unlocked: true,
+        requiresStart: true,
+        startUrl
+      });
     }
 
     res.json({ success: true, count: result.count, required: result.required, unlocked: false });
