@@ -583,7 +583,12 @@ bot.start(async (ctx) => {
           pendingUnlockTopicId: admin.firestore.FieldValue.delete(),
           pendingUnlockAt: admin.firestore.FieldValue.delete()
         });
-        return ctx.reply('🎬 আপনার unlocked video পাঠানো হয়েছে।');
+        return ctx.reply(
+          '🎬 আপনার ভিডিও আনলক হয়েছে!\nআরও ভিডিও দেখতে নিচের বাটনে ক্লিক করুন।',
+          Markup.inlineKeyboard([
+            [Markup.button.url('🎬 আরও ভিডিও দেখুন', MINI_APP_URL)]
+          ])
+        );
       } catch (deliveryError) {
         console.error('❌ Pending topic delivery error:', deliveryError.message);
         return ctx.reply('❌ ভিডিও পাঠাতে সমস্যা হয়েছে। কিছুক্ষণ পরে আবার চেষ্টা করুন।');
