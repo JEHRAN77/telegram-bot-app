@@ -409,8 +409,10 @@ async function getChannels() {
   if (POST_CHANNEL) {
     const key = String(POST_CHANNEL).trim();
     if (!seen.has(key)) {
-      result.unshift({
-        id: `env_${key.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+      const envId = `env_${key.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+      const override = result.find(c => c.legacyOverride && String(c.channelId||'').trim() === key) || null;
+      result.unshift(override ? { id: envId, ...override, legacy: true } : {
+        id: envId,
         name: 'Posting Channel',
         channelId: key,
         link: '',
@@ -1090,29 +1092,39 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
   await ctx.answerCbQuery();
   if (action === 'home') return sendAdminPanel(ctx, true);
   if (action === 'videos') {
-    return ctx.editMessageText('🎬 VIDEO MANAGEMENT\n\nএখান থেকে Video/Topic manage করুন:', Markup.inlineKeyboard([
+    return ctx.editMessageText('🎬 VIDEO MANAGEMENT\n\nপ্রয়োজনীয় কাজগুলো এখান থেকেই করুন:', Markup.inlineKeyboard([
       [Markup.button.callback('➕ Add Video', 'adm_add_video'), Markup.button.callback('📚 Add Topic', 'adm_add_topic')],
-      [Markup.button.callback('📋 All Videos', 'adm_list'), Markup.button.callback('🔥 Trending', 'adm_trending')],
-      [Markup.button.callback('🆕 New', 'adm_new'), Markup.button.callback('👑 Popular', 'adm_popular')],
+      [Markup.button.callback('📋 All Videos', 'adm_list')],
       [Markup.button.callback('⬅️ Back', 'adm_home')]
     ]));
   }
-  if (action === 'add_video') { startAddVideoWorkflow(ctx.from.id); return ctx.reply('📹 ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)'); }
-  if (action === 'add_topic') { startAddTopicWorkflow(ctx.from.id); return ctx.reply('📹 প্রথম ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)'); }
+  if (action === 'add_video') { startAddVideoWorkflow(ctx.from.id); await ctx.answerCbQuery('Add Video'); return ctx.reply('📹 ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)।\n\n⚠️ এটি Channel Post নয়। আগে ভিডিও, তারপর Title → Thumbnail → Ads Count দিন।'); }
+  if (action === 'add_topic') { startAddTopicWorkflow(ctx.from.id); await ctx.answerCbQuery('Add Topic'); return ctx.reply('📹 প্রথম ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)।\n\n⚠️ এটি Channel Post নয়। ভিডিওগুলো শেষে /done দিন, তারপর Title → Thumbnail → Ads Count।'); }
   if (action === 'list') {
     const topics = await getTopicsCached();
     if (!topics.length) return ctx.reply('📭 এখনো কোনো Video/Topic নেই।');
-    const rows = topics.slice(0, 30).map(t => [Markup.button.callback(`🎬 ${String(t.title || 'নামবিহীন').slice(0,32)}`, `aview:${t.id}`)]);
+    const rows = [];
+    topics.slice(0, 30).forEach(t => {
+      const title = String(t.title || 'নামবিহীন').slice(0, 28);
+      rows.push([Markup.button.callback(`🎬 ${title}`, `aview:${t.id}`)]);
+      rows.push([
+        Markup.button.callback('✏️ Title Edit', `av_rename:${t.id}`),
+        Markup.button.callback('🖼️ Thumbnail Edit', `av_thumb:${t.id}`)
+      ]);
+      rows.push([
+        Markup.button.callback('🎯 Ads', `av_ads:${t.id}`),
+        Markup.button.callback('📤 Post', `apost_topic:${t.id}`),
+        Markup.button.callback('🗑️ Delete', `av_delete:${t.id}`)
+      ]);
+    });
     rows.push([Markup.button.callback('⬅️ Back', 'adm_videos')]);
-    return ctx.editMessageText('📋 ALL VIDEOS\n\nএকটি Video নির্বাচন করুন:', Markup.inlineKeyboard(rows));
+    return ctx.editMessageText('📋 ALL VIDEOS\n\nনিচে প্রতিটি Video/Topic-এর সরাসরি Edit options আছে:', Markup.inlineKeyboard(rows));
   }
   if (action === 'trending' || action === 'new' || action === 'popular') {
-    const topics = await getTopicsCached();
-    let list = topics.slice();
-    if (action === 'popular') list.sort((a,b)=>(Number(b.unlockCount)||0)-(Number(a.unlockCount)||0));
-    else if (action === 'new') list.sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0));
-    else list.sort((a,b)=>((Number(b.dailyUnlockCount)||0)*1000+(Number(b.unlockCount)||0))-((Number(a.dailyUnlockCount)||0)*1000+(Number(a.unlockCount)||0)));
-    return ctx.reply((action==='trending'?'🔥 TRENDING':action==='new'?'🆕 NEW':'👑 POPULAR')+'\n\n'+list.slice(0,20).map((t,i)=>`${i+1}. ${t.title||'নামবিহীন'} — 👁️ ${Number(t.unlockCount)||0}`).join('\n') || '📭 কোনো video নেই।');
+    return ctx.editMessageText('ℹ️ এই Admin Panel-এ Trending/New/Popular দরকার নেই। Mini App থেকেই এগুলো দেখুন।', Markup.inlineKeyboard([
+      [Markup.button.callback('📋 All Videos', 'adm_list')],
+      [Markup.button.callback('⬅️ Back', 'adm_videos')]
+    ]));
   }
   if (action === 'channels') {
     const channels = await getChannels();
@@ -1170,11 +1182,11 @@ bot.action(/^apostch_topic:([^:]+):(.+)$/, async ctx=>{ if(!adminOnly(ctx))retur
 
 // Channel manager actions
 bot.action('ach_add', async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); await ctx.answerCbQuery(); postData[ctx.from.id]={step:'channel_name'}; return ctx.reply('📢 নতুন Channel-এর নাম লিখুন:'); });
-bot.action(/^ach_view:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); const id=ctx.match[1]; await ctx.answerCbQuery(); const isEnv=id.startsWith('env_'); let c=null; if(isEnv){ const channels=await getChannels(); c=channels.find(x=>x.id===id); } else { const doc=await db.collection('channels').doc(id).get(); if(doc.exists)c=doc.data(); } if(!c)return ctx.reply('❌ Channel পাওয়া যায়নি।'); return ctx.reply(`📢 ${c.name||'Posting Channel'}\n🆔 ${c.channelId}\n🟢 Active: ${c.active!==false}` ,Markup.inlineKeyboard([[Markup.button.callback('📤 Post Here','apostch:'+id),...(isEnv?[]:[Markup.button.callback(c.active===false?'🟢 Enable':'🔴 Disable','ach_toggle:'+id)])],...(isEnv?[]:[[Markup.button.callback('✏️ Edit','ach_edit:'+id),Markup.button.callback('🗑️ Delete','ach_del:'+id)]]),[Markup.button.callback('⬅️ Back','adm_channels')]])); });
-bot.action(/^ach_edit:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); const id=ctx.match[1]; if(id.startsWith('env_')) return ctx.answerCbQuery('ℹ️ Render-এর POST_CHANNEL থেকে এসেছে'); const d=await db.collection('channels').doc(id).get(); if(!d.exists)return ctx.answerCbQuery('❌ নেই'); await ctx.answerCbQuery(); postData[ctx.from.id]={step:'channel_edit_name',channelDocId:id,channel:d.data()}; return ctx.reply(`✏️ Current Channel Name: ${d.data().name||''}\n\nনতুন name পাঠান:`); });
+bot.action(/^ach_view:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); const id=ctx.match[1]; await ctx.answerCbQuery(); const channels=await getChannels(); const c=channels.find(x=>x.id===id || x.channelId===id); if(!c)return ctx.reply('❌ Channel পাওয়া যায়নি।'); return ctx.reply(`📢 ${c.name||'Posting Channel'}\n🆔 ${c.channelId}\n🔗 ${c.link||'(none)'}\n🟢 Active: ${c.active!==false}` ,Markup.inlineKeyboard([[Markup.button.callback('📤 Post Here','apostch:'+id),Markup.button.callback(c.active===false?'🟢 Enable':'🔴 Disable','ach_toggle:'+id)],[Markup.button.callback('✏️ Rename / Edit','ach_edit:'+id),Markup.button.callback('🗑️ Delete','ach_del:'+id)],[Markup.button.callback('⬅️ Back','adm_channels')]])); });
+bot.action(/^ach_edit:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); const id=ctx.match[1]; const channels=await getChannels(); const c=channels.find(x=>x.id===id || x.channelId===id); if(!c)return ctx.answerCbQuery('❌ নেই'); await ctx.answerCbQuery(); const docId=id.startsWith('env_') ? id : id; if(id.startsWith('env_')) { await db.collection('channels').doc(docId).set({name:c.name||'Posting Channel',channelId:c.channelId,link:c.link||'',active:c.active!==false,createdAt:Date.now(),updatedAt:Date.now(),legacyOverride:true},{merge:true}); } postData[ctx.from.id]={step:'channel_edit_name',channelDocId:docId,channel:c}; return ctx.reply(`✏️ Current Channel Name: ${c.name||''}\n\nনতুন Channel Name পাঠান:`); });
 
-bot.action(/^ach_toggle:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); const id=ctx.match[1]; if(id.startsWith('env_')) return ctx.answerCbQuery('ℹ️ POST_CHANNEL channel'); const ref=db.collection('channels').doc(id); const d=await ref.get(); if(!d.exists)return ctx.answerCbQuery('❌ নেই'); await ref.update({active:d.data().active===false,updatedAt:Date.now()}); await ctx.answerCbQuery('Updated'); return ctx.reply('✅ Channel status updated.'); });
-bot.action(/^ach_del:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); if(ctx.match[1].startsWith('env_')) return ctx.answerCbQuery('ℹ️ Render-এর POST_CHANNEL সরাসরি delete করা যাবে না'); await db.collection('channels').doc(ctx.match[1]).delete(); await ctx.answerCbQuery('Deleted'); return sendAdminPanel(ctx); });
+bot.action(/^ach_toggle:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); const id=ctx.match[1]; const ref=db.collection('channels').doc(id); const d=await ref.get(); if(!d.exists)return ctx.answerCbQuery('❌ নেই'); await ref.update({active:d.data().active===false,updatedAt:Date.now()}); await ctx.answerCbQuery('Updated'); return ctx.reply('✅ Channel status updated.'); });
+bot.action(/^ach_del:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); await db.collection('channels').doc(ctx.match[1]).delete(); await ctx.answerCbQuery('Deleted'); return sendAdminPanel(ctx); });
 
 // Admin posting: select channel then reuse the existing /post media/topic/caption flow
 bot.action(/^apostch:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); delete addVideoData[ctx.from.id]; delete addTopicData[ctx.from.id]; delete broadcastData[ctx.from.id]; const key=ctx.match[1]; let channelId=key; const doc=await db.collection('channels').doc(key).get(); if(doc.exists)channelId=doc.data().channelId; postData[ctx.from.id]={step:'mediaType',channels:[channelId]}; await ctx.answerCbQuery(); return ctx.reply('📤 Channel selected।\n\nকী পোস্ট করবেন?',Markup.inlineKeyboard([[Markup.button.callback('🎬 Video','post_type_video'),Markup.button.callback('🖼️ Photo','post_type_photo')],[Markup.button.callback('❌ Cancel','post_cancel')]])); });
