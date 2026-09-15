@@ -456,6 +456,32 @@ async function sendAdminPanel(ctx, edit = false) {
   return ctx.reply(text, keyboard);
 }
 
+
+function escapeHtml(text) {
+  return String(text ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;');
+}
+
+async function sendHtmlChunks(ctx, header, entries, options = {}) {
+  const maxLength = options.maxLength || 3800;
+  let chunk = String(header || '');
+  const sent = [];
+  for (const entry of entries) {
+    const part = String(entry || '');
+    if ((chunk + part).length > maxLength && chunk.trim()) {
+      sent.push(await ctx.reply(chunk, { parse_mode: 'HTML' }));
+      chunk = part;
+    } else {
+      chunk += part;
+    }
+  }
+  if (chunk.trim()) sent.push(await ctx.reply(chunk, { parse_mode: 'HTML' }));
+  return sent;
+}
+
 function adminOnly(ctx) { return ctx.from && ctx.from.id === ADMIN_ID; }
 
 // =============================================
@@ -1148,16 +1174,15 @@ bot.command('list', async (ctx) => {
       return ctx.reply('📭 এখনো কোনো টপিক যোগ করা হয়নি।');
     }
 
-    let message = '📋 সব টপিক:\n\n';
-    topics.forEach((data) => {
-      const doc = { id: data.id };
-      message += `📌 ${data.title || 'নামবিহীন'}\n`;
-      message += `   🆔 <code>${doc.id}</code>\n`;
-      message += `   📹 ${data.videoCount || 0}টি ভিডিও\n`;
-      message += `   👁️ ${Number(data.unlockCount || data.unlocks || data.views) || 0} ভিউ\n`;
-      message += `   🔢 ${data.adsRequired || 0}টি অ্যাড\n\n`;
+    const entries = topics.map((data) => {
+      const id = escapeHtml(data.id);
+      const title = escapeHtml(data.title || 'নামবিহীন');
+      const videoCount = Number(data.videoCount || (Array.isArray(data.videos) ? data.videos.length : 0)) || 0;
+      const views = Number(data.unlockCount || data.unlocks || data.views) || 0;
+      const ads = Number(data.adsRequired || 0) || 0;
+      return `📌 ${title}\n   🆔 <code>${id}</code>\n   📹 ${videoCount}টি ভিডিও\n   👁️ ${views} ভিউ\n   🔢 ${ads}টি অ্যাড\n\n`;
     });
-    await ctx.reply(message, { parse_mode: 'HTML' });
+    await sendHtmlChunks(ctx, '📋 সব টপিক:\n\n', entries);
   } catch (error) {
     console.error('❌ Error in /list:', error);
     await ctx.reply('❌ তালিকা দেখাতে সমস্যা: ' + error.message);
@@ -1227,14 +1252,10 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
     const topics = await getTopicsCached();
     if (!topics.length) return ctx.reply('📭 কোনো Video/Topic নেই।');
 
-    // Same ID format as /list: Telegram <code> text can be tapped/held to copy.
-    let message = '🆔 VIDEO/TOPIC IDS\n\n';
-    topics.forEach((t, i) => {
-      message += `📌 ${t.title || 'নামবিহীন'}\n`;
-      message += `   🆔 <code>${String(t.id)}</code>\n\n`;
-    });
-
-    return ctx.reply(message, { parse_mode: 'HTML' });
+    const entries = topics.map((t, i) =>
+      `${i + 1}. 📌 ${escapeHtml(t.title || 'নামবিহীন')}\n   🆔 <code>${escapeHtml(t.id)}</code>\n\n`
+    );
+    return sendHtmlChunks(ctx, '🆔 VIDEO/TOPIC IDS\n\n', entries);
   }
   if (action === 'video_rename') {
     renameData[ctx.from.id] = { step: 'id' };
@@ -1534,11 +1555,12 @@ async function sendUserPage(ctx, docs, page) {
   docs.forEach((doc, index) => {
     const user = doc.data();
     const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
-    const displayName = fullName || 'নাম পাওয়া যায়নি';
-    const username = user.username ? `@${String(user.username).replace(/^@/, '')}` : 'Username নেই';
+    const displayName = escapeHtml(fullName || 'নাম পাওয়া যায়নি');
+    const username = user.username ? `@${escapeHtml(String(user.username).replace(/^@/, ''))}` : 'Username নেই';
     const status = user.verified === true ? '✅' : '❌';
+    const userId = escapeHtml(user.userId || doc.id);
     message += `${(page - 1) * 25 + index + 1}. ${displayName}\n`;
-    message += `   👤 ${username}\n   🆔 <code>${user.userId || doc.id}</code> ${status}\n\n`;
+    message += `   👤 ${username}\n   🆔 <code>${userId}</code> ${status}\n\n`;
   });
   const buttons = adminUserCursor ? Markup.inlineKeyboard([[Markup.button.callback('➡️ পরের ২৫ জন', 'admin_users_next')]]) : undefined;
   await ctx.reply(message, { parse_mode: 'HTML', ...(buttons ? { reply_markup: buttons.reply_markup } : {}) });
