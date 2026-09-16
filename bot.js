@@ -4,6 +4,7 @@ const cors = require('cors');
 const admin = require('firebase-admin');
 const path = require('path');
 const cron = require('node-cron');
+const crypto = require('crypto');
 require('dotenv').config();
 
 const app = express();
@@ -267,6 +268,23 @@ async function getDailyAdLimit() {
 
 function invalidateDailyLimitCache() { dailyLimitCacheAt = 0; }
 
+// 🛡️ Ad-watch anti-abuse: since the Monetag Frontend Callback (the browser
+// Promise from show_XXX()) can be spoofed by anyone editing page JS — Monetag
+// themselves warn about this — we require a short-lived, single-use token
+// issued right before the ad is shown, and only accept /api/ad-complete if
+// the token matches AND a realistic minimum amount of time has actually
+// passed (a real rewarded ad takes several seconds; a scripted call hitting
+// the endpoint instantly cannot fake that elapsed time).
+const adTokens = new Map(); // token -> { userId, topicId, createdAt }
+const AD_TOKEN_TTL_MS = 5 * 60 * 1000;      // tokens expire after 5 minutes unused
+const MIN_AD_DURATION_MS = 8 * 1000;        // an ad can't realistically finish in under 8s
+function cleanupAdTokens() {
+  const now = Date.now();
+  for (const [token, data] of adTokens.entries()) {
+    if ((now - data.createdAt) > AD_TOKEN_TTL_MS) adTokens.delete(token);
+  }
+}
+
 // 💰 Revenue tracking: admin sets an estimated CPM (revenue per 1000 ad
 // views) since third-party ad networks (libtl.com etc.) don't expose a
 // revenue API here — this gives an estimate based on real ad-view counts.
@@ -296,6 +314,23 @@ async function recordAdView() {
   }
 }
 
+// 💵 Real, confirmed revenue — recorded only when Monetag's own server calls
+// our postback URL (configured in the Monetag SSP dashboard, per zone) to
+// confirm an ad was actually monetized. Unlike the client-side count above,
+// this cannot be faked from the browser.
+async function recordRealAdRevenue(amount) {
+  try {
+    const today = getDhakaDateKey();
+    await db.collection('system').doc('adStats').set({
+      totalRevenueReal: admin.firestore.FieldValue.increment(amount),
+      ['revenueByDate.' + today]: admin.firestore.FieldValue.increment(amount),
+      totalPostbacksReceived: admin.firestore.FieldValue.increment(1)
+    }, { merge: true });
+  } catch (e) {
+    console.error('❌ recordRealAdRevenue error:', e.message);
+  }
+}
+
 async function getAdStats() {
   const today = getDhakaDateKey();
   const doc = await db.collection('system').doc('adStats').get();
@@ -303,8 +338,36 @@ async function getAdStats() {
   const totalAdViews = Number(data.totalAdViews) || 0;
   const byDate = data.adViewsByDate || {};
   const todayAdViews = Number(byDate[today]) || 0;
-  return { totalAdViews, todayAdViews };
+  const totalRevenueReal = Number(data.totalRevenueReal) || 0;
+  const revByDate = data.revenueByDate || {};
+  const todayRevenueReal = Number(revByDate[today]) || 0;
+  const totalPostbacksReceived = Number(data.totalPostbacksReceived) || 0;
+  return { totalAdViews, todayAdViews, totalRevenueReal, todayRevenueReal, totalPostbacksReceived };
 }
+
+// GET /api/postback/monetag?secret=...&ymid=...&event=impression&value=valued&amount=0.0042
+// Configure this exact URL (with your own POSTBACK_SECRET) in the Monetag
+// SSP dashboard for your zone. Always respond 200 so Monetag doesn't keep
+// retrying — even on our own validation failures, since a retry storm from
+// a permanently-invalid config helps no one.
+app.get('/api/postback/monetag', async (req, res) => {
+  try {
+    const secret = process.env.POSTBACK_SECRET;
+    if (!secret || req.query.secret !== secret) {
+      console.warn('⚠️ Rejected postback with invalid/missing secret');
+      return res.sendStatus(200);
+    }
+    const rewardStatus = String(req.query.value || req.query.reward_event_type || '').toLowerCase();
+    const amount = Number(req.query.amount || req.query.estimated_price) || 0;
+    if (rewardStatus === 'valued' && amount > 0) {
+      await recordRealAdRevenue(amount);
+    }
+    return res.sendStatus(200);
+  } catch (error) {
+    console.error('❌ Monetag postback error:', error.message);
+    return res.sendStatus(200);
+  }
+});
 
 function getCleanupDueAt(sentMessages) {
   const times = (Array.isArray(sentMessages) ? sentMessages : [])
@@ -333,6 +396,8 @@ let postData = {};
 let repostData = {};
 let adminChannelData = {};
 let adminButtonData = {};
+let bulkSelect = { ids: new Set(), page: 0 };
+const BULK_PAGE_SIZE = 15;
 let adminVideoData = {};
 let userSearchData = {};
 let forwardRepostData = {};
@@ -711,6 +776,9 @@ bot.start(async (ctx) => {
         return ctx.reply('🎬 আপনার unlocked video পাঠানো হয়েছে।');
       } catch (deliveryError) {
         console.error('❌ Pending topic delivery error:', deliveryError.message);
+        if (deliveryError.message === 'User is blocked') {
+          return ctx.reply('⛔ আপনাকে এই বট ব্যবহার থেকে ব্লক করা হয়েছে।');
+        }
         return ctx.reply('❌ ভিডিও পাঠাতে সমস্যা হয়েছে। কিছুক্ষণ পরে আবার চেষ্টা করুন।');
       }
     }
@@ -1147,7 +1215,8 @@ bot.action('post_confirm', async (ctx) => {
     await ctx.reply(
       `✅ Posting Channel-এ Post হয়ে গেছে।\n\n` +
       `🆔 Video/Topic ID: ${state.topicId}\n` +
-      `📌 Channel Message ID: ${sent.message_id}`
+      `📌 Channel Message ID: ${sent.message_id}`,
+      { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup }
     );
   } catch (error) {
     console.error('❌ /post publish error:', error);
@@ -1325,6 +1394,41 @@ bot.command('admin', async (ctx) => {
 // =============================================
 // 👑 BUTTON-BASED ADMIN PANEL
 // =============================================
+async function renderBulkTopicsPanel(ctx) {
+  const topics = await getTopicsCached();
+  if (!topics.length) {
+    return ctx.editMessageText('📭 এখনো কোনো টপিক যোগ করা হয়নি।', Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'adm_videos')]]));
+  }
+  const totalPages = Math.max(1, Math.ceil(topics.length / BULK_PAGE_SIZE));
+  if (bulkSelect.page >= totalPages) bulkSelect.page = totalPages - 1;
+  if (bulkSelect.page < 0) bulkSelect.page = 0;
+  const start = bulkSelect.page * BULK_PAGE_SIZE;
+  const pageTopics = topics.slice(start, start + BULK_PAGE_SIZE);
+
+  const rows = pageTopics.map(t => {
+    const checked = bulkSelect.ids.has(t.id) ? '✅' : '⬜';
+    const title = String(t.title || 'নামবিহীন').slice(0, 30);
+    const ads = Number(t.adsRequired || 0) || 0;
+    return [Markup.button.callback(`${checked} ${title} (${ads} ads)`, `blk:${t.id}`)];
+  });
+
+  const navRow = [];
+  if (bulkSelect.page > 0) navRow.push(Markup.button.callback('◀️ Prev', 'blkpage:prev'));
+  navRow.push(Markup.button.callback(`পাতা ${bulkSelect.page + 1}/${totalPages}`, 'adm_bulk_topics'));
+  if (bulkSelect.page < totalPages - 1) navRow.push(Markup.button.callback('Next ▶️', 'blkpage:next'));
+  rows.push(navRow);
+
+  const n = bulkSelect.ids.size;
+  rows.push([
+    Markup.button.callback(`🗑️ Delete Selected (${n})`, 'adm_bulk_delete_prompt'),
+    Markup.button.callback(`🔢 Set Ads (${n})`, 'adm_bulk_ads_prompt')
+  ]);
+  rows.push([Markup.button.callback('❌ Cancel / Clear', 'adm_bulk_cancel')]);
+
+  const text = `🗂️ BULK SELECT TOPICS\n\nট্যাপ করে টপিক select/unselect করুন, তারপর নিচের বাটন দিয়ে Delete বা Ads Count বদলান।\n\nমোট টপিক: ${topics.length} | Selected: ${n}`;
+  return ctx.editMessageText(text, Markup.inlineKeyboard(rows));
+}
+
 bot.action(/^adm_(.+)$/, async (ctx) => {
   if (!adminOnly(ctx)) return ctx.answerCbQuery('❌ অনুমতি নেই');
   const action = ctx.match[1];
@@ -1339,6 +1443,7 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
       [Markup.button.callback('✏️ Rename / Title', 'adm_video_rename')],
       [Markup.button.callback('🖼️ Thumbnail Edit', 'adm_video_thumb')],
       [Markup.button.callback('🗑️ Delete Video', 'adm_video_delete')],
+      [Markup.button.callback('🗂️ Bulk Select (Delete/Ads)', 'adm_bulk_topics')],
       [Markup.button.callback('⬅️ Back', 'adm_home')]
     ]));
   }
@@ -1443,16 +1548,25 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
   if (action === 'daily_limit') { const current=await getDailyAdLimit(); updateAdsData[ctx.from.id]={step:'dailyLimit'}; return ctx.reply(`📊 বর্তমান Daily Ad Limit: ${current}টি\n\nনতুন limit লিখুন:`); }
   if (action === 'revenue') {
     const [stats, cpm] = await Promise.all([getAdStats(), getAdCpm()]);
-    const totalRevenue = (stats.totalAdViews / 1000) * cpm;
-    const todayRevenue = (stats.todayAdViews / 1000) * cpm;
-    const text = `💰 REVENUE (অনুমান)\n\n` +
+    const estTotalRevenue = (stats.totalAdViews / 1000) * cpm;
+    const estTodayRevenue = (stats.todayAdViews / 1000) * cpm;
+    let text = `💰 REVENUE\n\n` +
       `📺 মোট Ad Views: ${stats.totalAdViews.toLocaleString('en-US')}\n` +
       `📅 আজকের Ad Views: ${stats.todayAdViews.toLocaleString('en-US')}\n\n` +
-      `⚙️ CPM (প্রতি ১০০০ view): ${cpm} ৳\n\n` +
-      `💵 মোট আনুমানিক আয়: ${totalRevenue.toFixed(2)} ৳\n` +
-      `💵 আজকের আনুমানিক আয়: ${todayRevenue.toFixed(2)} ৳\n\n` +
-      `⚠️ এটা শুধু ad-network-এ আপনার আসল CPM দিয়ে হিসাব করা estimate। প্রকৃত আয় দেখতে আপনার ad network-এর নিজস্ব ড্যাশবোর্ড দেখুন।`;
-    return ctx.editMessageText(text, Markup.inlineKeyboard([[Markup.button.callback('⚙️ CPM সেট করুন', 'adm_set_cpm')], [Markup.button.callback('⬅️ Back', 'adm_home')]]));
+      `⚙️ CPM (প্রতি ১০০০ view): ${cpm} ৳\n` +
+      `💵 আনুমানিক মোট আয় (estimate): ${estTotalRevenue.toFixed(2)} ৳\n` +
+      `💵 আনুমানিক আজকের আয় (estimate): ${estTodayRevenue.toFixed(2)} ৳\n`;
+    if (stats.totalPostbacksReceived > 0) {
+      text += `\n✅ REAL CONFIRMED REVENUE (Monetag Postback দিয়ে verified):\n` +
+        `💵 মোট: ${stats.totalRevenueReal.toFixed(4)} ৳\n` +
+        `💵 আজকে: ${stats.todayRevenueReal.toFixed(4)} ৳\n` +
+        `📩 মোট Postback পাওয়া গেছে: ${stats.totalPostbacksReceived}টি`;
+    } else {
+      text += `\n⚠️ এখনো কোনো Monetag Postback পাওয়া যায়নি — উপরের সংখ্যাগুলো শুধুই estimate। প্রকৃত আয় দেখতে Monetag SSP dashboard-এ গিয়ে আপনার zone-এর Postback URL সেট করুন:\n` +
+        `<code>${escapeHtml(SELF_URL || 'https://your-domain.com')}/api/postback/monetag?secret=YOUR_SECRET&ymid={ymid}&event={event_type}&value={reward_event_type}&amount={estimated_price}</code>\n\n` +
+        `(YOUR_SECRET-এর জায়গায় আপনার .env-এর POSTBACK_SECRET বসাবেন)`;
+    }
+    return ctx.editMessageText(text, { parse_mode: 'HTML', ...{ reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⚙️ CPM সেট করুন', 'adm_set_cpm')], [Markup.button.callback('⬅️ Back', 'adm_home')]]).reply_markup } });
   }
   if (action === 'set_cpm') {
     const current = await getAdCpm();
@@ -1479,6 +1593,33 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
       console.error('❌ Export error:', error.message);
       return ctx.reply('❌ Export করতে সমস্যা হয়েছে: ' + error.message);
     }
+  }
+  if (action === 'bulk_topics') { return renderBulkTopicsPanel(ctx); }
+  if (action === 'bulk_cancel') {
+    bulkSelect = { ids: new Set(), page: 0 };
+    return ctx.editMessageText('🗂️ Bulk selection clear করা হয়েছে।', Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'adm_videos')]]));
+  }
+  if (action === 'bulk_delete_prompt') {
+    if (!bulkSelect.ids.size) { return renderBulkTopicsPanel(ctx); }
+    return ctx.editMessageText(`⚠️ আপনি ${bulkSelect.ids.size}টি টপিক স্থায়ীভাবে DELETE করতে চলেছেন। এটা Undo করা যাবে না।\n\nনিশ্চিত?`, Markup.inlineKeyboard([
+      [Markup.button.callback('✅ হ্যাঁ, Delete করো', 'adm_bulk_delete_yes'), Markup.button.callback('❌ না, Cancel', 'adm_bulk_delete_no')]
+    ]));
+  }
+  if (action === 'bulk_delete_yes') {
+    const ids = Array.from(bulkSelect.ids);
+    let deleted = 0;
+    for (const id of ids) {
+      try { await db.collection('topics').doc(id).delete(); deleted++; } catch (e) { console.error('❌ bulk delete error for', id, e.message); }
+    }
+    invalidateTopicsCache();
+    bulkSelect = { ids: new Set(), page: 0 };
+    return ctx.editMessageText(`✅ ${deleted}টি টপিক delete করা হয়েছে।`, Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'adm_videos')]]));
+  }
+  if (action === 'bulk_delete_no') { return renderBulkTopicsPanel(ctx); }
+  if (action === 'bulk_ads_prompt') {
+    if (!bulkSelect.ids.size) { return renderBulkTopicsPanel(ctx); }
+    updateAdsData[ctx.from.id] = { step: 'bulkAdsCount', ids: Array.from(bulkSelect.ids) };
+    return ctx.reply(`🔢 ${bulkSelect.ids.size}টি selected টপিকের জন্য নতুন Ads Required সংখ্যা লিখুন:`);
   }
   if (action === 'broadcast') { broadcastData[ctx.from.id]={step:'content'}; return ctx.reply('📣 Broadcast content পাঠান।\n🖼️ Photo / 🎬 Video / ✏️ Text'); }
   if (action === 'buttons') {
@@ -1539,7 +1680,7 @@ bot.action(/^av_delete_confirm:(.+)$/, async ctx=>{
   return ctx.editMessageText('✅ Video/Topic delete হয়েছে।', Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'adm_list')]]));
 });
 bot.action(/^apost_topic:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); const channels=await getChannels(); const rows=channels.filter(c=>c.active!==false).map(c=>[Markup.button.callback(`📢 ${String(c.name||c.channelId).slice(0,35)}`,`apostch_topic:${c.id||c.channelId}:${ctx.match[1]}`)]); if(!rows.length&&POST_CHANNEL)rows.push([Markup.button.callback('📢 Default Channel',`apostch_topic:${POST_CHANNEL}:${ctx.match[1]}`)]); rows.push([Markup.button.callback('⬅️ Back','aview:'+ctx.match[1])]); await ctx.answerCbQuery(); return ctx.editMessageText('📤 SELECT CHANNEL FOR THIS VIDEO',Markup.inlineKeyboard(rows)); });
-bot.action(/^apostch_topic:([^:]+):(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); delete adminVideoData[ctx.from.id]; let ch=ctx.match[1]; const doc=await db.collection('channels').doc(ch).get(); if(doc.exists)ch=doc.data().channelId; const topicId=ctx.match[2]; const td=await db.collection('topics').doc(topicId).get(); if(!td.exists)return ctx.answerCbQuery('❌ Video নেই'); const t=td.data(); const fileId=(t.videos&&t.videos[0])||t.videoId||''; if(!fileId)return ctx.answerCbQuery('❌ Video file পাওয়া যায়নি'); const kb=await buildConfiguredPostKeyboard(topicId); await ctx.answerCbQuery('Posting...'); try{const sent=await bot.telegram.sendVideo(ch,fileId,{caption:t.title||'',reply_markup:kb.reply_markup}); await recordTopicPost(topicId,ch,sent.message_id,'video',t.title||'',t.title||''); return ctx.reply(`✅ Post হয়েছে\n📢 ${ch}\n🆔 Message ID: ${sent.message_id}`);}catch(e){return ctx.reply('❌ Channel-এ post করা যায়নি: '+e.message);} });
+bot.action(/^apostch_topic:([^:]+):(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); delete adminVideoData[ctx.from.id]; let ch=ctx.match[1]; const doc=await db.collection('channels').doc(ch).get(); if(doc.exists)ch=doc.data().channelId; const topicId=ctx.match[2]; const td=await db.collection('topics').doc(topicId).get(); if(!td.exists)return ctx.answerCbQuery('❌ Video নেই'); const t=td.data(); const fileId=(t.videos&&t.videos[0])||t.videoId||''; if(!fileId)return ctx.answerCbQuery('❌ Video file পাওয়া যায়নি'); const kb=await buildConfiguredPostKeyboard(topicId); await ctx.answerCbQuery('Posting...'); try{const sent=await bot.telegram.sendVideo(ch,fileId,{caption:t.title||'',reply_markup:kb.reply_markup}); await recordTopicPost(topicId,ch,sent.message_id,'video',t.title||'',t.title||''); return ctx.reply(`✅ Post হয়েছে\n📢 ${ch}\n🆔 Message ID: ${sent.message_id}`, { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup });}catch(e){return ctx.reply('❌ Channel-এ post করা যায়নি: '+e.message);} });
 
 // =============================================
 // 📢 REPOST: Channel -> saved captions -> instant copy
@@ -1648,7 +1789,7 @@ bot.action(/^repost_confirm:(\d+)$/, async ctx => {
     const copied = await bot.telegram.copyMessage(rec.channelId, rec.channelId, Number(rec.messageId), copyOptions);
     await recordTopicPost(rec.topicId || 'repost', rec.channelId, copied.message_id, rec.type || 'video', rec.caption || '', rec.title || '');
     delete repostData[ctx.from.id];
-    return ctx.reply(`✅ Post আবার Repost হয়েছে (বাটনসহ)।\n\n📢 ${rec.channelId}\n📝 ${String(rec.caption || rec.title || '(Caption নেই)').slice(0, 300)}\n🆔 নতুন Message ID: ${copied.message_id}`);
+    return ctx.reply(`✅ Post আবার Repost হয়েছে (বাটনসহ)।\n\n📢 ${rec.channelId}\n📝 ${String(rec.caption || rec.title || '(Caption নেই)').slice(0, 300)}\n🆔 নতুন Message ID: ${copied.message_id}`, { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup });
   } catch (e) {
     console.error('❌ Repost error:', e.message);
     return ctx.reply(`❌ Repost করা যায়নি।\n\n📢 ${rec.channelId}\n🆔 Message ID: ${rec.messageId}\n\n${e.message}`);
@@ -1918,6 +2059,21 @@ async function sendUserPage(ctx, docs, page) {
   const buttons = adminUserCursor ? Markup.inlineKeyboard([[Markup.button.callback('➡️ পরের ২৫ জন', 'admin_users_next')]]) : undefined;
   await ctx.reply(message, { parse_mode: 'HTML', ...(buttons ? { reply_markup: buttons.reply_markup } : {}) });
 }
+
+bot.action(/^blk:(.+)$/, async (ctx) => {
+  if (!adminOnly(ctx)) return ctx.answerCbQuery('❌ অনুমতি নেই');
+  const id = ctx.match[1];
+  if (bulkSelect.ids.has(id)) bulkSelect.ids.delete(id); else bulkSelect.ids.add(id);
+  try { await ctx.answerCbQuery(); } catch (e) {}
+  return renderBulkTopicsPanel(ctx);
+});
+
+bot.action(/^blkpage:(prev|next)$/, async (ctx) => {
+  if (!adminOnly(ctx)) return ctx.answerCbQuery('❌ অনুমতি নেই');
+  bulkSelect.page += ctx.match[1] === 'next' ? 1 : -1;
+  try { await ctx.answerCbQuery(); } catch (e) {}
+  return renderBulkTopicsPanel(ctx);
+});
 
 bot.action(/^ublk:(.+)$/, async (ctx) => {
   if (!adminOnly(ctx)) return ctx.answerCbQuery('❌ অনুমতি নেই');
@@ -2326,6 +2482,23 @@ bot.on('text', async (ctx) => {
     return ctx.reply(`✅ CPM এখন ${value} ৳ (প্রতি ১০০০ ad view)।`);
   }
 
+  if (updateAdsData[userId] && updateAdsData[userId].step === 'bulkAdsCount') {
+    const value = Number(text);
+    if (!Number.isInteger(value) || value < 1 || value > 999) return ctx.reply('❌ Ads count 1-999 এর মধ্যে একটা সংখ্যা হতে হবে।');
+    const ids = updateAdsData[userId].ids || [];
+    delete updateAdsData[userId];
+    try {
+      const batch = db.batch();
+      ids.forEach(id => batch.update(db.collection('topics').doc(id), { adsRequired: value }));
+      await batch.commit();
+      invalidateTopicsCache();
+      return ctx.reply(`✅ ${ids.length}টি টপিকের Ads Required এখন ${value}টি।`, { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup });
+    } catch (error) {
+      console.error('❌ Bulk ads update error:', error.message);
+      return ctx.reply('❌ আপডেট করতে সমস্যা হয়েছে: ' + error.message);
+    }
+  }
+
   if (updateAdsData[userId]) {
     const state = updateAdsData[userId];
 
@@ -2564,7 +2737,7 @@ async function saveTopic(ctx, data) {
       createdAt: new Date().toISOString()
     });
     invalidateTopicsCache();
-    await ctx.reply(`✅ টপিক "${data.title}" তৈরি হয়েছে!\n📹 ভিডিও সংখ্যা: ${data.videos.length}\n🔢 অ্যাড প্রয়োজন: ${data.adsRequired}\n🆔 টপিক আইডি: <code>${topicRef.id}</code>`, { parse_mode: 'HTML' });
+    await ctx.reply(`✅ টপিক "${data.title}" তৈরি হয়েছে!\n📹 ভিডিও সংখ্যা: ${data.videos.length}\n🔢 অ্যাড প্রয়োজন: ${data.adsRequired}\n🆔 টপিক আইডি: <code>${topicRef.id}</code>`, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup });
   } catch (error) {
     console.error('Error saving topic:', error);
     await ctx.reply('❌ টপিক সেভ করতে সমস্যা হয়েছে।');
@@ -2587,7 +2760,7 @@ async function saveVideo(ctx, data) {
       createdAt: new Date().toISOString()
     });
     invalidateTopicsCache();
-    await ctx.reply(`✅ ভিডিও "${data.title}" যোগ হয়েছে!\n🆔 টপিক আইডি: <code>${topicRef.id}</code>`, { parse_mode: 'HTML' });
+    await ctx.reply(`✅ ভিডিও "${data.title}" যোগ হয়েছে!\n🆔 টপিক আইডি: <code>${topicRef.id}</code>`, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup });
   } catch (error) {
     console.error('Error saving video:', error);
     await ctx.reply('❌ ভিডিও সেভ করতে সমস্যা হয়েছে।');
@@ -2708,6 +2881,14 @@ async function deliverUnlockedTopic(userId, topicId) {
   const userRef = db.collection('users').doc(userId.toString());
   const doc = await userRef.get();
   const data = doc.exists ? doc.data() : {};
+
+  // 🚫 Single choke point for all delivery paths (/api/ad-complete AND the
+  // /start pending-unlock flow) — a blocked user never gets a video, no
+  // matter which route triggered this call.
+  if (data.blocked === true) {
+    throw new Error('User is blocked');
+  }
+
   let unlockedTopics = data.unlockedTopics || [];
   let topicUnlockTime = data.topicUnlockTime || {};
   let sentMessages = data.sentMessages || [];
@@ -2784,11 +2965,48 @@ async function deliverUnlockedTopic(userId, topicId) {
   return { success: true, videosDelivered: videos.length };
 }
 
-app.post('/api/ad-complete', async (req, res) => {
+// Issue a short-lived token right before showing the ad. The frontend must
+// send this back with /api/ad-complete — this is what makes it hard for a
+// script to skip the ad and call ad-complete directly.
+app.post('/api/ad-start', async (req, res) => {
   try {
     const userId = String(req.body.userId || '').trim();
     const topicId = String(req.body.topicId || '').trim();
     if (!userId || !topicId) return res.status(400).json({ error: 'userId and topicId are required' });
+
+    const userRef = db.collection('users').doc(userId);
+    const snap = await userRef.get();
+    if (snap.exists && snap.data().blocked === true) {
+      return res.status(403).json({ success: false, blocked: true, error: 'আপনাকে ব্যবহার থেকে ব্লক করা হয়েছে।' });
+    }
+
+    cleanupAdTokens();
+    const token = crypto.randomBytes(16).toString('hex');
+    adTokens.set(token, { userId, topicId, createdAt: Date.now() });
+    return res.json({ success: true, token });
+  } catch (error) {
+    console.error('❌ /api/ad-start error:', error.message);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.post('/api/ad-complete', async (req, res) => {
+  try {
+    const userId = String(req.body.userId || '').trim();
+    const topicId = String(req.body.topicId || '').trim();
+    const token = String(req.body.token || '').trim();
+    if (!userId || !topicId) return res.status(400).json({ error: 'userId and topicId are required' });
+
+    // 🛡️ Require a valid, matching, not-yet-used ad-start token that's old
+    // enough to correspond to a real ad view (see AD_TOKEN_TTL_MS / MIN_AD_DURATION_MS).
+    const tokenData = adTokens.get(token);
+    if (!tokenData || tokenData.userId !== userId || tokenData.topicId !== topicId) {
+      return res.status(400).json({ success: false, error: '❌ Ad session verify করা যায়নি। আবার Ad দেখুন।' });
+    }
+    if ((Date.now() - tokenData.createdAt) < MIN_AD_DURATION_MS) {
+      return res.status(400).json({ success: false, error: '❌ Ad সম্পূর্ণ না দেখেই সম্পন্ন দেখানো হয়েছে বলে মনে হচ্ছে। আবার চেষ্টা করুন।' });
+    }
+    adTokens.delete(token); // single-use
 
     const topicDoc = await db.collection('topics').doc(topicId).get();
     if (!topicDoc.exists) return res.status(404).json({ error: 'Topic not found' });

@@ -252,6 +252,7 @@ var currentTopic=null;
 var isWatching=false;
 var adCompleted=false;
 var adCount=0;
+var currentAdToken=null;
 var totalAds=0;
 var splashShown=false;
 
@@ -480,21 +481,30 @@ function startAds(topic,button){
   totalAds=Math.max(1,parseInt(topic.adsRequired,10)||1);
   adCount=0;isWatching=true;adCompleted=false;
   if(button){button.disabled=true;button.textContent='Preparing Ad…';}
-  var overlay=document.getElementById('ad-overlay');
-  overlay.classList.add('show');
-  document.getElementById('adTimer').textContent='•••';
 
-  var adFn=window.show_11737734;
-  if(typeof adFn!=='function'){
-    resetAd('Ad is not ready');
-    return;
-  }
-  try{
-    Promise.resolve(adFn()).then(function(result){
-      if(result && result.done===false){resetAd('Ad was not completed');return}
-      adCompleted=true;recordAd(button);
-    }).catch(function(e){console.error(e);resetAd('Ad failed')});
-  }catch(e){console.error(e);resetAd('Ad failed')}
+  fetch(API+'/ad-start',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({userId:userId(),topicId:topic.id})
+  }).then(function(r){return r.json()}).then(function(startData){
+    if(!startData||!startData.success){resetAd(startData&&startData.error||'Ad শুরু করা যায়নি');return}
+    currentAdToken=startData.token;
+
+    var overlay=document.getElementById('ad-overlay');
+    overlay.classList.add('show');
+    document.getElementById('adTimer').textContent='•••';
+
+    var adFn=window.show_11737734;
+    if(typeof adFn!=='function'){
+      resetAd('Ad is not ready');
+      return;
+    }
+    try{
+      Promise.resolve(adFn()).then(function(result){
+        if(result && result.done===false){resetAd('Ad was not completed');return}
+        adCompleted=true;recordAd(button);
+      }).catch(function(e){console.error(e);resetAd('Ad failed')});
+    }catch(e){console.error(e);resetAd('Ad failed')}
+  }).catch(function(e){console.error(e);resetAd('Ad শুরু করা যায়নি')});
 }
 
 async function recordAd(button){
@@ -504,8 +514,9 @@ async function recordAd(button){
   try{
     var r=await fetch(API+'/ad-complete',{
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({userId:userId(),topicId:currentTopic.id})
+      body:JSON.stringify({userId:userId(),topicId:currentTopic.id,token:currentAdToken})
     });
+    currentAdToken=null;
     var data=await r.json();
     if(data.limitReached){
       dailyLimitReached=true;isWatching=false;
