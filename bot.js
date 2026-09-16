@@ -182,6 +182,8 @@ let singleTopicRefresh = new Map();
 let fileLinkCache = new Map();
 let dailyLimitCache = DEFAULT_DAILY_AD_LIMIT;
 let dailyLimitCacheAt = 0;
+let adCpmCache = 0;
+let adCpmCacheAt = 0;
 let cleanupRunning = false;
 let adminStatsCache = null;
 let adminStatsCacheAt = 0;
@@ -264,6 +266,45 @@ async function getDailyAdLimit() {
 }
 
 function invalidateDailyLimitCache() { dailyLimitCacheAt = 0; }
+
+// 💰 Revenue tracking: admin sets an estimated CPM (revenue per 1000 ad
+// views) since third-party ad networks (libtl.com etc.) don't expose a
+// revenue API here — this gives an estimate based on real ad-view counts.
+async function getAdCpm() {
+  const now = Date.now();
+  if ((now - adCpmCacheAt) < DAILY_LIMIT_CACHE_TTL) return adCpmCache;
+  try {
+    const doc = await db.collection('system').doc('settings').get();
+    const value = doc.exists ? Number(doc.data().adCpm) : 0;
+    adCpmCache = Number.isFinite(value) && value >= 0 ? value : 0;
+    adCpmCacheAt = now;
+  } catch (e) {
+    console.error('❌ Ad CPM read error:', e.message);
+  }
+  return adCpmCache;
+}
+
+async function recordAdView() {
+  try {
+    const today = getDhakaDateKey();
+    await db.collection('system').doc('adStats').set({
+      totalAdViews: admin.firestore.FieldValue.increment(1),
+      ['adViewsByDate.' + today]: admin.firestore.FieldValue.increment(1)
+    }, { merge: true });
+  } catch (e) {
+    console.error('❌ recordAdView error:', e.message);
+  }
+}
+
+async function getAdStats() {
+  const today = getDhakaDateKey();
+  const doc = await db.collection('system').doc('adStats').get();
+  const data = doc.exists ? doc.data() : {};
+  const totalAdViews = Number(data.totalAdViews) || 0;
+  const byDate = data.adViewsByDate || {};
+  const todayAdViews = Number(byDate[today]) || 0;
+  return { totalAdViews, todayAdViews };
+}
 
 function getCleanupDueAt(sentMessages) {
   const times = (Array.isArray(sentMessages) ? sentMessages : [])
@@ -497,7 +538,8 @@ async function sendAdminPanel(ctx, edit = false) {
     [Markup.button.callback('📊 Dashboard', 'adm_dashboard'), Markup.button.callback('🎬 Videos', 'adm_videos')],
     [Markup.button.callback('📢 Channels', 'adm_channels'), Markup.button.callback('📤 Create Post', 'adm_create_post')],
     [Markup.button.callback('👥 Users', 'adm_users'), Markup.button.callback('📺 Ads', 'adm_ads')],
-    [Markup.button.callback('📣 Broadcast', 'adm_broadcast'), Markup.button.callback('🔘 Post Buttons', 'adm_buttons')]
+    [Markup.button.callback('📣 Broadcast', 'adm_broadcast'), Markup.button.callback('🔘 Post Buttons', 'adm_buttons')],
+    [Markup.button.callback('💰 Revenue', 'adm_revenue'), Markup.button.callback('📦 Export Data', 'adm_export')]
   ]);
   if (edit && ctx.callbackQuery?.message) {
     return ctx.editMessageText(text, keyboard).catch(() => ctx.reply(text, keyboard));
@@ -1399,6 +1441,45 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
   if (action === 'ads') return ctx.reply('📺 Ads Management', Markup.inlineKeyboard([[Markup.button.callback('🎯 Set Video Ads','adm_set_ads')],[Markup.button.callback('🎯 Daily Limit','adm_daily_limit')],[Markup.button.callback('⬅️ Back','adm_home')]]));
   if (action === 'set_ads') { updateAdsData[ctx.from.id]={step:'topicId'}; return ctx.reply('🎯 Video/Topic ID পাঠান:'); }
   if (action === 'daily_limit') { const current=await getDailyAdLimit(); updateAdsData[ctx.from.id]={step:'dailyLimit'}; return ctx.reply(`📊 বর্তমান Daily Ad Limit: ${current}টি\n\nনতুন limit লিখুন:`); }
+  if (action === 'revenue') {
+    const [stats, cpm] = await Promise.all([getAdStats(), getAdCpm()]);
+    const totalRevenue = (stats.totalAdViews / 1000) * cpm;
+    const todayRevenue = (stats.todayAdViews / 1000) * cpm;
+    const text = `💰 REVENUE (অনুমান)\n\n` +
+      `📺 মোট Ad Views: ${stats.totalAdViews.toLocaleString('en-US')}\n` +
+      `📅 আজকের Ad Views: ${stats.todayAdViews.toLocaleString('en-US')}\n\n` +
+      `⚙️ CPM (প্রতি ১০০০ view): ${cpm} ৳\n\n` +
+      `💵 মোট আনুমানিক আয়: ${totalRevenue.toFixed(2)} ৳\n` +
+      `💵 আজকের আনুমানিক আয়: ${todayRevenue.toFixed(2)} ৳\n\n` +
+      `⚠️ এটা শুধু ad-network-এ আপনার আসল CPM দিয়ে হিসাব করা estimate। প্রকৃত আয় দেখতে আপনার ad network-এর নিজস্ব ড্যাশবোর্ড দেখুন।`;
+    return ctx.editMessageText(text, Markup.inlineKeyboard([[Markup.button.callback('⚙️ CPM সেট করুন', 'adm_set_cpm')], [Markup.button.callback('⬅️ Back', 'adm_home')]]));
+  }
+  if (action === 'set_cpm') {
+    const current = await getAdCpm();
+    updateAdsData[ctx.from.id] = { step: 'adCpm' };
+    return ctx.reply(`⚙️ বর্তমান CPM: ${current} ৳ (প্রতি ১০০০ ad view)\n\nনতুন CPM সংখ্যা লিখুন (উদাহরণ: 40):`);
+  }
+  if (action === 'export') {
+    try {
+      const [topicsSnap, counts] = await Promise.all([
+        db.collection('topics').get(),
+        getUserCountsCached()
+      ]);
+      const topics = topicsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        summary: { totalUsers: counts.totalUsers, verifiedUsers: counts.verifiedUsers, totalTopics: topics.length },
+        topics
+      };
+      const buffer = Buffer.from(JSON.stringify(payload, null, 2), 'utf-8');
+      const filename = `backup-${getDhakaDateKey()}.json`;
+      await ctx.replyWithDocument({ source: buffer, filename }, { caption: `📦 Backup তৈরি হয়েছে — ${topics.length}টি topic, ${counts.totalUsers} users।` });
+      return;
+    } catch (error) {
+      console.error('❌ Export error:', error.message);
+      return ctx.reply('❌ Export করতে সমস্যা হয়েছে: ' + error.message);
+    }
+  }
   if (action === 'broadcast') { broadcastData[ctx.from.id]={step:'content'}; return ctx.reply('📣 Broadcast content পাঠান।\n🖼️ Photo / 🎬 Video / ✏️ Text'); }
   if (action === 'buttons') {
     const bs=await getPostButtons();
@@ -1761,6 +1842,24 @@ bot.command('stats', async (ctx) => {
   }
 });
 
+bot.command('block', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+  const args = ctx.message.text.trim().split(/\s+/);
+  const targetId = args[1];
+  if (!targetId) return ctx.reply('ব্যবহার: /block <userId>');
+  await db.collection('users').doc(targetId).set({ blocked: true }, { merge: true });
+  return ctx.reply(`🚫 Blocked: ${targetId}`);
+});
+
+bot.command('unblock', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
+  const args = ctx.message.text.trim().split(/\s+/);
+  const targetId = args[1];
+  if (!targetId) return ctx.reply('ব্যবহার: /unblock <userId>');
+  await db.collection('users').doc(targetId).set({ blocked: false }, { merge: true });
+  return ctx.reply(`✅ Unblocked: ${targetId}`);
+});
+
 bot.command('user', async (ctx) => {
   try {
     if (ctx.from.id !== ADMIN_ID) return ctx.reply('⛔ এই কমান্ড শুধুমাত্র অ্যাডমিনের জন্য।');
@@ -1811,13 +1910,31 @@ async function sendUserPage(ctx, docs, page) {
     const displayName = escapeHtml(fullName || 'নাম পাওয়া যায়নি');
     const username = user.username ? `@${escapeHtml(String(user.username).replace(/^@/, ''))}` : 'Username নেই';
     const status = user.verified === true ? '✅' : '❌';
+    const blockedTag = user.blocked === true ? ' 🚫' : '';
     const userId = escapeHtml(user.userId || doc.id);
-    message += `${(page - 1) * 25 + index + 1}. ${displayName}\n`;
+    message += `${(page - 1) * 25 + index + 1}. ${displayName}${blockedTag}\n`;
     message += `   👤 ${username}\n   🆔 <code>${userId}</code> ${status}\n\n`;
   });
   const buttons = adminUserCursor ? Markup.inlineKeyboard([[Markup.button.callback('➡️ পরের ২৫ জন', 'admin_users_next')]]) : undefined;
   await ctx.reply(message, { parse_mode: 'HTML', ...(buttons ? { reply_markup: buttons.reply_markup } : {}) });
 }
+
+bot.action(/^ublk:(.+)$/, async (ctx) => {
+  if (!adminOnly(ctx)) return ctx.answerCbQuery('❌ অনুমতি নেই');
+  const targetId = ctx.match[1];
+  try {
+    const userRef = db.collection('users').doc(String(targetId));
+    const doc = await userRef.get();
+    if (!doc.exists) { await ctx.answerCbQuery('❌ User পাওয়া যায়নি'); return; }
+    const currentlyBlocked = doc.data().blocked === true;
+    await userRef.set({ blocked: !currentlyBlocked }, { merge: true });
+    await ctx.answerCbQuery(currentlyBlocked ? '✅ Unblocked' : '🚫 Blocked');
+    return ctx.reply(`${currentlyBlocked ? '✅ Unblocked' : '🚫 Blocked'}: <code>${escapeHtml(targetId)}</code>`, { parse_mode: 'HTML' });
+  } catch (error) {
+    console.error('❌ Block toggle error:', error.message);
+    try { await ctx.answerCbQuery('❌ সমস্যা হয়েছে'); } catch (e) {}
+  }
+});
 
 bot.action('admin_users_next', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID || !adminUserCursor) return ctx.answerCbQuery('❌ অনুমতি নেই');
@@ -2200,6 +2317,15 @@ bot.on('text', async (ctx) => {
     return ctx.reply(`✅ Daily Ad Limit এখন ${value}টি।`);
   }
 
+  if (updateAdsData[userId] && updateAdsData[userId].step === 'adCpm') {
+    const value = Number(text);
+    if (!Number.isFinite(value) || value < 0 || value > 100000) return ctx.reply('❌ সঠিক CPM সংখ্যা লিখুন (০ বা তার বেশি)।');
+    await db.collection('system').doc('settings').set({ adCpm: value }, { merge: true });
+    adCpmCache = value; adCpmCacheAt = Date.now();
+    delete updateAdsData[userId];
+    return ctx.reply(`✅ CPM এখন ${value} ৳ (প্রতি ১০০০ ad view)।`);
+  }
+
   if (updateAdsData[userId]) {
     const state = updateAdsData[userId];
 
@@ -2268,14 +2394,20 @@ bot.on('text', async (ctx) => {
       const results = await searchUsers(text.trim());
       if (!results.length) return ctx.reply('📭 এই নামে/ID-তে কোনো user পাওয়া যায়নি।');
       let message = `🔍 ফলাফল (${results.length}টি):\n\n`;
+      const blockRows = [];
       results.forEach((user, index) => {
         const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
         const displayName = escapeHtml(fullName || 'নাম পাওয়া যায়নি');
         const username = user.username ? `@${escapeHtml(String(user.username).replace(/^@/, ''))}` : 'Username নেই';
         const status = user.verified === true ? '✅' : '❌';
-        message += `${index + 1}. ${displayName}\n   👤 ${username}\n   🆔 <code>${escapeHtml(user.userId)}</code> ${status}\n\n`;
+        const isBlocked = user.blocked === true;
+        message += `${index + 1}. ${displayName}${isBlocked ? ' 🚫' : ''}\n   👤 ${username}\n   🆔 <code>${escapeHtml(user.userId)}</code> ${status}\n\n`;
+        blockRows.push([Markup.button.callback(
+          `${isBlocked ? '✅ Unblock' : '🚫 Block'} ${(fullName || user.userId)}`.slice(0, 40),
+          `ublk:${user.userId}`
+        )]);
       });
-      return ctx.reply(message, { parse_mode: 'HTML' });
+      return ctx.reply(message, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard(blockRows).reply_markup });
     } catch (error) {
       console.error('❌ User search error:', error.message);
       return ctx.reply('❌ খুঁজতে সমস্যা হয়েছে: ' + error.message);
@@ -2663,6 +2795,13 @@ app.post('/api/ad-complete', async (req, res) => {
     const required = Math.max(1, Number(topicDoc.data().adsRequired) || 1);
 
     const userRef = db.collection('users').doc(userId);
+
+    // 🚫 Blocked users can't unlock or receive new content.
+    const preSnap = await userRef.get();
+    if (preSnap.exists && preSnap.data().blocked === true) {
+      return res.status(403).json({ success: false, blocked: true, error: 'আপনাকে ব্যবহার থেকে ব্লক করা হয়েছে।' });
+    }
+
     const dailyLimit = await getDailyAdLimit();
     const today = getDhakaDateKey();
     const result = await db.runTransaction(async tx => {
@@ -2671,16 +2810,21 @@ app.post('/api/ad-complete', async (req, res) => {
       const progress = { ...(data.adProgress || {}) };
       const unlockedTopics = data.unlockedTopics || [];
       const current = Number(progress[topicId]) || 0;
-      if (unlockedTopics.includes(topicId)) return { count: required, required, unlocked: true, limitReached: false, dailyUsed: Number(data.dailyAdsUsed) || 0 };
+      if (unlockedTopics.includes(topicId)) return { count: required, required, unlocked: true, limitReached: false, dailyUsed: Number(data.dailyAdsUsed) || 0, adViewCounted: false };
 
       const dailyUsed = data.dailyAdDate === today ? (Number(data.dailyAdsUsed) || 0) : 0;
-      if (dailyUsed >= dailyLimit) return { count: current, required, unlocked: false, limitReached: true, dailyUsed };
+      if (dailyUsed >= dailyLimit) return { count: current, required, unlocked: false, limitReached: true, dailyUsed, adViewCounted: false };
 
       const next = Math.min(current + 1, required);
       progress[topicId] = next;
       tx.set(userRef, { adProgress: progress, dailyAdDate: today, dailyAdsUsed: dailyUsed + 1 }, { merge: true });
-      return { count: next, required, unlocked: next >= required, limitReached: false, dailyUsed: dailyUsed + 1 };
+      return { count: next, required, unlocked: next >= required, limitReached: false, dailyUsed: dailyUsed + 1, adViewCounted: true };
     });
+
+    // Count this as a real ad impression for the revenue estimate — but only
+    // when it was an actual fresh ad watch, not the "already unlocked" or
+    // "daily limit reached" short-circuits above.
+    if (result.adViewCounted) recordAdView().catch(() => {});
 
     if (result.limitReached) {
       return res.status(429).json({ success: false, limitReached: true, dailyLimit, dailyUsed: result.dailyUsed, error: 'আজকের Ad Limit শেষ' });
@@ -2695,12 +2839,18 @@ app.post('/api/ad-complete', async (req, res) => {
       if (userData.botStarted === true) {
         try {
           await deliverUnlockedTopic(userId, topicId);
+          const directStartUrl = BOT_USERNAME ? `https://t.me/${BOT_USERNAME}` : null;
           return res.json({
             success: true,
             count: result.count,
             required: result.required,
             unlocked: true,
-            directDelivered: true
+            directDelivered: true,
+            // Every unlock (not just the first) should take the user into the
+            // bot chat so they actually see the video land, instead of the
+            // delivery happening silently in the background.
+            requiresStart: !!directStartUrl,
+            startUrl: directStartUrl || undefined
           });
         } catch (deliveryError) {
           console.error('❌ Direct topic delivery error:', deliveryError.message);
