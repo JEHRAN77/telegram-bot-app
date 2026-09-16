@@ -401,6 +401,10 @@ const BULK_PAGE_SIZE = 15;
 let adminVideoData = {};
 let userSearchData = {};
 let forwardRepostData = {};
+let topicSearchData = {};
+let appendVideoData = {};
+let duplicateTopicData = {};
+let channelPickData = {};
 
 // Isolate admin workflows. Add Video/Topic always has priority over /post.
 function clearAdminWorkflow(userId) {
@@ -415,6 +419,10 @@ function clearAdminWorkflow(userId) {
   delete thumbnailData[userId];
   delete userSearchData[userId];
   delete forwardRepostData[userId];
+  delete topicSearchData[userId];
+  delete appendVideoData[userId];
+  delete duplicateTopicData[userId];
+  delete channelPickData[userId];
 }
 function startAddVideoWorkflow(userId) {
   clearAdminWorkflow(userId);
@@ -425,6 +433,25 @@ function startAddTopicWorkflow(userId) {
   clearAdminWorkflow(userId);
   delete addVideoData[userId];
   addTopicData[userId] = { step: 'video', videos: [] };
+}
+function startAppendVideoWorkflow(userId, topicId) {
+  clearAdminWorkflow(userId);
+  delete addTopicData[userId];
+  delete addVideoData[userId];
+  appendVideoData[userId] = { step: 'video', topicId };
+}
+function startDuplicateTopicWorkflow(userId, sourceTopic) {
+  clearAdminWorkflow(userId);
+  delete addTopicData[userId];
+  delete addVideoData[userId];
+  duplicateTopicData[userId] = {
+    step: 'video',
+    sourceId: sourceTopic.id,
+    title: sourceTopic.title || 'নামবিহীন',
+    thumbnail: sourceTopic.thumbnail || '',
+    adsRequired: Math.max(1, Number(sourceTopic.adsRequired) || 1),
+    videos: []
+  };
 }
 
 let helpAdminLinkCache = process.env.HELP_ADMIN_LINK || '';
@@ -587,6 +614,104 @@ async function getChannels() {
   return result;
 }
 
+// 📤 Multi-channel picker — lets the admin tick 1 or more channels at once
+// instead of posting to each channel one at a time.
+async function renderChannelPicker(ctx) {
+  const userId = ctx.from.id;
+  const state = channelPickData[userId];
+  if (!state) return;
+  const channels = await getChannels();
+  const active = channels.filter(c => c.active !== false);
+  const rows = active.map(c => {
+    const key = c.id || c.channelId;
+    const checked = state.selected.has(key) ? '✅' : '⬜';
+    return [Markup.button.callback(`${checked} ${String(c.name || c.channelId).slice(0, 35)}`, 'pch_toggle:' + key)];
+  });
+  if (!rows.length && POST_CHANNEL) {
+    const checked = state.selected.has(POST_CHANNEL) ? '✅' : '⬜';
+    rows.push([Markup.button.callback(`${checked} Posting Channel`, 'pch_toggle:' + POST_CHANNEL)]);
+  }
+  const n = state.selected.size;
+  rows.push([Markup.button.callback(`▶️ Continue (${n} selected)`, 'pch_continue')]);
+  rows.push([Markup.button.callback('❌ Cancel', 'pch_cancel')]);
+  const heading = state.mode === 'topic_post'
+    ? '📤 SELECT CHANNEL(S)\n\nএক বা একাধিক Channel সিলেক্ট করুন:'
+    : '➕ CREATE NEW POST\n\nএক বা একাধিক Channel সিলেক্ট করুন:';
+  return ctx.editMessageText(heading, Markup.inlineKeyboard(rows)).catch(() => ctx.reply(heading, Markup.inlineKeyboard(rows)));
+}
+
+bot.action(/^pch_toggle:(.+)$/, async ctx => {
+  if (!adminOnly(ctx)) return ctx.answerCbQuery('❌ অনুমতি নেই');
+  const state = channelPickData[ctx.from.id];
+  if (!state) { try { await ctx.answerCbQuery('❌ /admin দিয়ে আবার শুরু করুন'); } catch (e) {} return; }
+  const key = ctx.match[1];
+  if (state.selected.has(key)) state.selected.delete(key); else state.selected.add(key);
+  try { await ctx.answerCbQuery(); } catch (e) {}
+  return renderChannelPicker(ctx);
+});
+
+bot.action('pch_cancel', async ctx => {
+  if (!adminOnly(ctx)) return ctx.answerCbQuery('❌ অনুমতি নেই');
+  delete channelPickData[ctx.from.id];
+  try { await ctx.answerCbQuery('Cancelled'); } catch (e) {}
+  return ctx.editMessageText('❌ বাতিল করা হয়েছে।', Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]));
+});
+
+bot.action('pch_continue', async ctx => {
+  if (!adminOnly(ctx)) return ctx.answerCbQuery('❌ অনুমতি নেই');
+  const state = channelPickData[ctx.from.id];
+  if (!state || !state.selected.size) { try { await ctx.answerCbQuery('❌ কমপক্ষে একটি Channel সিলেক্ট করুন'); } catch (e) {} return; }
+  try { await ctx.answerCbQuery(); } catch (e) {}
+
+  const keys = Array.from(state.selected);
+  const resolved = [];
+  for (const key of keys) {
+    let channelId = key;
+    try {
+      const doc = await db.collection('channels').doc(key).get();
+      if (doc.exists) channelId = doc.data().channelId;
+    } catch (e) {}
+    resolved.push(channelId);
+  }
+
+  if (state.mode === 'new_post') {
+    delete channelPickData[ctx.from.id];
+    postData[ctx.from.id] = { step: 'mediaType', channels: resolved };
+    return ctx.editMessageText(
+      `📤 ${resolved.length}টি Channel সিলেক্ট হয়েছে।\n\nকী পোস্ট করবেন?`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback('🎬 Video', 'post_type_video'), Markup.button.callback('🖼️ Photo', 'post_type_photo')],
+        [Markup.button.callback('❌ Cancel', 'post_cancel')]
+      ])
+    );
+  }
+
+  if (state.mode === 'topic_post') {
+    const topicId = state.topicId;
+    delete channelPickData[ctx.from.id];
+    const td = await db.collection('topics').doc(topicId).get();
+    if (!td.exists) return ctx.reply('❌ Video/Topic পাওয়া যায়নি।');
+    const t = td.data();
+    const fileId = (t.videos && t.videos[0]) || t.videoId || '';
+    if (!fileId) return ctx.reply('❌ Video file পাওয়া যায়নি।');
+    const kb = await buildConfiguredPostKeyboard(topicId);
+    const lines = [];
+    for (const channelId of resolved) {
+      try {
+        const sent = await bot.telegram.sendVideo(channelId, fileId, { caption: t.title || '', reply_markup: kb.reply_markup });
+        await recordTopicPost(topicId, channelId, sent.message_id, 'video', t.title || '', t.title || '');
+        lines.push(`✅ ${channelId} — Message ID: ${sent.message_id}`);
+      } catch (e) {
+        lines.push(`❌ ${channelId} — ${e.message}`);
+      }
+    }
+    return ctx.reply(
+      `📤 Post সম্পন্ন হয়েছে (${resolved.length}টি Channel):\n\n${lines.join('\n')}`,
+      { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup }
+    );
+  }
+});
+
 async function addChannelRecord(data) {
   const ref = await db.collection('channels').add({
     name: data.name, channelId: data.channelId, link: data.link || '', active: true, createdAt: Date.now(), updatedAt: Date.now()
@@ -665,6 +790,11 @@ async function getOrCreateUser(userId, username, firstName, lastName) {
         dailyAdsUsed: 0
       });
       invalidateAdminStatsCache();
+      // 📊 Daily Summary tracking: count of brand-new users, per Dhaka date.
+      const today = getDhakaDateKey();
+      db.collection('system').doc('dailyStats').set({
+        ['newUsersByDate.' + today]: admin.firestore.FieldValue.increment(1)
+      }, { merge: true }).catch(e => console.error('❌ dailyStats increment error:', e.message));
       return { userId, username, firstName, lastName, verified: false, unlockedTopics: [], topicUnlockTime: {}, sentMessages: [], cleanupDueAt: null };
     }
     return { id: doc.id, ...doc.data() };
@@ -887,6 +1017,33 @@ bot.on('video', async (ctx) => {
     return;
   }
 
+  if (duplicateTopicData[userId] && duplicateTopicData[userId].step === 'video') {
+    try {
+      const storedFileId = await forwardVideoToStorageChannel(ctx, fileId);
+      const data = duplicateTopicData[userId];
+      data.videos.push(storedFileId);
+      await ctx.reply(`✅ ভিডিও ${data.videos.length} সংরক্ষিত হয়েছে (Duplicate: ${data.title})।\nআরও ভিডিও পাঠান অথবা /done লিখুন শেষ করতে।`);
+    } catch (error) {
+      console.error('❌ Duplicate Topic storage error:', error);
+      await ctx.reply('❌ ভিডিও স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে।').catch(() => {});
+    }
+    return;
+  }
+
+  if (appendVideoData[userId] && appendVideoData[userId].step === 'video') {
+    try {
+      const storedFileId = await forwardVideoToStorageChannel(ctx, fileId);
+      const result = await appendVideoToTopic(appendVideoData[userId].topicId, storedFileId);
+      delete appendVideoData[userId];
+      if (!result) return ctx.reply('❌ Topic আর পাওয়া যাচ্ছে না।');
+      return ctx.reply(`✅ ভিডিও যুক্ত হয়েছে!\n\n📌 ${result.title}\n📹 এখন মোট ভিডিও: ${result.videoCount}\n🆔 ${result.id}`, { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🎬 Topic দেখুন', 'aview:' + result.id)], [Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup });
+    } catch (error) {
+      console.error('❌ Append Video storage error:', error);
+      await ctx.reply('❌ ভিডিও স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে।').catch(() => {});
+    }
+    return;
+  }
+
   if (addTopicData[userId] || addVideoData[userId]) {
     try {
       const storedFileId = await forwardVideoToStorageChannel(ctx, fileId);
@@ -931,6 +1088,33 @@ bot.on('document', async (ctx) => {
 
   // /post preview: NEVER send preview documents to STORAGE_CHANNEL.
   // Telegram may deliver a video uploaded as a file/document here instead of as a video.
+  if (duplicateTopicData[userId] && duplicateTopicData[userId].step === 'video') {
+    try {
+      const storedFileId = await forwardVideoToStorageChannel(ctx, fileId);
+      const data = duplicateTopicData[userId];
+      data.videos.push(storedFileId);
+      await ctx.reply(`✅ ভিডিও ${data.videos.length} সংরক্ষিত হয়েছে (Duplicate: ${data.title})।\nআরও ভিডিও পাঠান অথবা /done লিখুন শেষ করতে।`);
+    } catch (error) {
+      console.error('❌ Duplicate Topic document storage error:', error);
+      await ctx.reply('❌ ভিডিও স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে।').catch(() => {});
+    }
+    return;
+  }
+
+  if (appendVideoData[userId] && appendVideoData[userId].step === 'video') {
+    try {
+      const storedFileId = await forwardVideoToStorageChannel(ctx, fileId);
+      const result = await appendVideoToTopic(appendVideoData[userId].topicId, storedFileId);
+      delete appendVideoData[userId];
+      if (!result) return ctx.reply('❌ Topic আর পাওয়া যাচ্ছে না।');
+      return ctx.reply(`✅ ভিডিও যুক্ত হয়েছে!\n\n📌 ${result.title}\n📹 এখন মোট ভিডিও: ${result.videoCount}\n🆔 ${result.id}`, { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🎬 Topic দেখুন', 'aview:' + result.id)], [Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup });
+    } catch (error) {
+      console.error('❌ Append Video document storage error:', error);
+      await ctx.reply('❌ ভিডিও স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে।').catch(() => {});
+    }
+    return;
+  }
+
   if (addTopicData[userId] || addVideoData[userId]) {
     try {
       const storedFileId = await forwardVideoToStorageChannel(ctx, fileId);
@@ -990,6 +1174,19 @@ bot.on('document', async (ctx) => {
 
 bot.command('done', async (ctx) => {
   const userId = ctx.from.id;
+
+  // /done also finalizes a Duplicate Topic workflow — title/thumbnail/ads
+  // are already copied from the source topic, so no extra steps needed.
+  if (duplicateTopicData[userId]) {
+    const data = duplicateTopicData[userId];
+    if (data.videos.length === 0) {
+      return ctx.reply('❌ কমপক্ষে একটি ভিডিও পাঠান।');
+    }
+    await saveDuplicateTopic(ctx, data);
+    delete duplicateTopicData[userId];
+    return;
+  }
+
   if (!addTopicData[userId]) {
     return ctx.reply('❌ কোনো টপিক যোগ করা হচ্ছে না। /addtopic দিয়ে শুরু করুন।');
   }
@@ -999,6 +1196,30 @@ bot.command('done', async (ctx) => {
   }
   data.step = 'title';
   await ctx.reply(`📝 এই টপিকের জন্য একটি টাইটেল দিন (${data.videos.length}টি ভিডিওর জন্য):`);
+});
+
+// =============================================
+// 🛑 /cancel — বের হওয়ার সহজ উপায়। ভিডিও/টপিক Add, Post, Broadcast,
+// Rename, Thumbnail, Ads, Duplicate, Append — যেকোনো কাজের মাঝপথে
+// আটকে গেলে এই কমান্ড দিয়ে সব state clear করে ফেলা যাবে।
+// =============================================
+bot.command('cancel', async (ctx) => {
+  const userId = ctx.from.id;
+  const wasActive = !!(
+    addTopicData[userId] || addVideoData[userId] || broadcastData[userId] ||
+    updateAdsData[userId] || renameData[userId] || thumbnailData[userId] ||
+    postData[userId] || repostData[userId] || adminChannelData[userId] ||
+    adminButtonData[userId] || adminVideoData[userId] || userSearchData[userId] ||
+    forwardRepostData[userId] || topicSearchData[userId] || appendVideoData[userId] ||
+    duplicateTopicData[userId] || channelPickData[userId]
+  );
+  clearAdminWorkflow(userId);
+  delete addTopicData[userId];
+  delete addVideoData[userId];
+  if (!wasActive) {
+    return ctx.reply('ℹ️ কোনো কাজ চলছিল না, তাই বাতিল করার কিছু নেই।');
+  }
+  return ctx.reply('✅ চলমান কাজটি বাতিল করা হয়েছে। /admin দিয়ে আবার শুরু করতে পারেন।');
 });
 
 // =============================================
@@ -1187,8 +1408,8 @@ bot.action('post_confirm', async (ctx) => {
   if (!state || state.step !== 'confirm' || !state.fileId || !state.topicId) {
     return ctx.answerCbQuery('❌ Post data পাওয়া যায়নি। /post দিয়ে আবার শুরু করুন');
   }
-  const postingChannel = (state.channels && state.channels[0]) || POST_CHANNEL;
-  if (!postingChannel) return ctx.answerCbQuery('❌ Posting Channel সেট করা নেই');
+  const postingChannels = (state.channels && state.channels.length) ? state.channels : (POST_CHANNEL ? [POST_CHANNEL] : []);
+  if (!postingChannels.length) return ctx.answerCbQuery('❌ Posting Channel সেট করা নেই');
 
   const helpLink = await getHelpAdminLink();
   if (!helpLink) return ctx.answerCbQuery('❌ /setlink দিয়ে Help Admin link সেট করুন');
@@ -1196,26 +1417,35 @@ bot.action('post_confirm', async (ctx) => {
   await ctx.answerCbQuery('Posting...');
   try {
     const keyboard = await buildConfiguredPostKeyboard(state.topicId);
-    let sent;
+    const lines = [];
 
-    if (state.type === 'video') {
-      sent = await bot.telegram.sendVideo(postingChannel, state.fileId, {
-        caption: state.caption || undefined,
-        reply_markup: keyboard.reply_markup
-      });
-    } else {
-      sent = await bot.telegram.sendPhoto(postingChannel, state.fileId, {
-        caption: state.caption || undefined,
-        reply_markup: keyboard.reply_markup
-      });
+    for (const postingChannel of postingChannels) {
+      try {
+        let sent;
+        if (state.type === 'video') {
+          sent = await bot.telegram.sendVideo(postingChannel, state.fileId, {
+            caption: state.caption || undefined,
+            reply_markup: keyboard.reply_markup
+          });
+        } else {
+          sent = await bot.telegram.sendPhoto(postingChannel, state.fileId, {
+            caption: state.caption || undefined,
+            reply_markup: keyboard.reply_markup
+          });
+        }
+        await recordTopicPost(state.topicId, postingChannel, sent.message_id, state.type, state.caption || '', state.topicId);
+        lines.push(`✅ ${postingChannel} — Message ID: ${sent.message_id}`);
+      } catch (chErr) {
+        console.error(`❌ /post publish error [${postingChannel}]:`, chErr.message);
+        lines.push(`❌ ${postingChannel} — ${chErr.message}`);
+      }
     }
 
-    await recordTopicPost(state.topicId, postingChannel, sent.message_id, state.type, state.caption || '', state.topicId);
     delete postData[userId];
     await ctx.reply(
-      `✅ Posting Channel-এ Post হয়ে গেছে।\n\n` +
-      `🆔 Video/Topic ID: ${state.topicId}\n` +
-      `📌 Channel Message ID: ${sent.message_id}`,
+      `📤 Post সম্পন্ন হয়েছে (${postingChannels.length}টি Channel):\n\n` +
+      `🆔 Video/Topic ID: ${state.topicId}\n\n` +
+      lines.join('\n'),
       { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup }
     );
   } catch (error) {
@@ -1439,6 +1669,8 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
   if (action === 'videos') {
     return ctx.editMessageText('🎬 VIDEO MANAGEMENT\n\nএখানে শুধু Video/Topic-এর নিজস্ব management থাকবে।\nPost ও Ads আলাদা Admin menu থেকে করা যাবে।', Markup.inlineKeyboard([
       [Markup.button.callback('➕ Add Video', 'adm_add_video'), Markup.button.callback('📚 Add Topic', 'adm_add_topic')],
+      [Markup.button.callback('📼 Existing Topic-এ Video যুক্ত করুন', 'adm_append_video')],
+      [Markup.button.callback('🔍 Topic Search', 'adm_topic_search')],
       [Markup.button.callback('🆔 Video IDs', 'adm_video_ids')],
       [Markup.button.callback('✏️ Rename / Title', 'adm_video_rename')],
       [Markup.button.callback('🖼️ Thumbnail Edit', 'adm_video_thumb')],
@@ -1449,6 +1681,16 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
   }
   if (action === 'add_video') { startAddVideoWorkflow(ctx.from.id); return ctx.reply('📹 ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)।\n\n⚠️ এটি Channel Post নয়। আগে ভিডিও, তারপর Title → Thumbnail → Ads Count দিন।'); }
   if (action === 'add_topic') { startAddTopicWorkflow(ctx.from.id); return ctx.reply('📹 প্রথম ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)।\n\n⚠️ এটি Channel Post নয়। ভিডিওগুলো শেষে /done দিন, তারপর Title → Thumbnail → Ads Count।'); }
+  if (action === 'append_video') {
+    clearAdminWorkflow(ctx.from.id);
+    appendVideoData[ctx.from.id] = { step: 'topicId' };
+    return ctx.reply('📼 কোন Topic-এ ভিডিও যুক্ত করবেন?\n\n👉 Topic ID পাঠান, বা 🔍 Topic Search ব্যবহার করে সেখান থেকে "➕ Video যুক্ত করুন" চাপুন।');
+  }
+  if (action === 'topic_search') {
+    clearAdminWorkflow(ctx.from.id);
+    topicSearchData[ctx.from.id] = { step: 'query' };
+    return ctx.reply('🔍 Topic-এর নাম বা ID লিখে পাঠান:');
+  }
   if (action === 'list') {
     const topics = await getTopicsCached();
     if (!topics.length) return ctx.reply('📭 এখনো কোনো Video/Topic নেই।');
@@ -1511,11 +1753,9 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
     ]));
   }
   if (action === 'new_post') {
-    const channels = await getChannels();
-    const rows = channels.filter(c=>c.active!==false).map(ch => [Markup.button.callback(`📢 ${String(ch.name||ch.channelId).slice(0,35)}`, `apostch:${ch.id || ch.channelId}`)]);
-    if (!rows.length && POST_CHANNEL) rows.push([Markup.button.callback('📢 Posting Channel', `apostch:${POST_CHANNEL}`)]);
-    rows.push([Markup.button.callback('⬅️ Back', 'adm_create_post')]);
-    return ctx.editMessageText('➕ CREATE NEW POST\n\nকোন Channel-এ post করবেন?', Markup.inlineKeyboard(rows));
+    clearAdminWorkflow(ctx.from.id);
+    channelPickData[ctx.from.id] = { mode: 'new_post', selected: new Set() };
+    return renderChannelPicker(ctx);
   }
   if (action === 'repost') {
     clearAdminWorkflow(ctx.from.id);
@@ -1652,6 +1892,7 @@ bot.action(/^aview:(.+)$/, async ctx=>{
   return ctx.editMessageText(`🎬 VIDEO DETAILS\n\n📌 ${t.title||'নামবিহীন'}\n🆔 ${id}\n📹 Videos: ${t.videoCount||0}\n🎯 Ads: ${t.adsRequired||1}\n👁️ Views: ${Number(t.unlockCount||0)}`,Markup.inlineKeyboard([
     [Markup.button.callback('✏️ Rename','av_rename:'+id),Markup.button.callback('🖼️ Thumbnail','av_thumb:'+id)],
     [Markup.button.callback('🎯 Ads','av_ads:'+id),Markup.button.callback('📤 Post','apost_topic:'+id)],
+    [Markup.button.callback('📼 Video যুক্ত করুন','av_append:'+id),Markup.button.callback('🧬 Duplicate','av_duplicate:'+id)],
     [Markup.button.callback('🗑️ Delete','av_delete:'+id)],
     [Markup.button.callback('⬅️ Back','adm_list')]
   ]));
@@ -1659,6 +1900,26 @@ bot.action(/^aview:(.+)$/, async ctx=>{
 bot.action(/^av_rename:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); await ctx.answerCbQuery(); renameData[ctx.from.id]={step:'title',topicId:ctx.match[1]}; const d=await db.collection('topics').doc(ctx.match[1]).get(); return ctx.reply(`✏️ Current: ${d.exists?(d.data().title||'নামবিহীন'):'নেই'}\n\nনতুন Title পাঠান:`); });
 bot.action(/^av_thumb:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); await ctx.answerCbQuery(); thumbnailData[ctx.from.id]={step:'photo',topicId:ctx.match[1]}; return ctx.reply('🖼️ নতুন Thumbnail Photo পাঠান:'); });
 bot.action(/^av_ads:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); await ctx.answerCbQuery(); updateAdsData[ctx.from.id]={step:'count',topicId:ctx.match[1]}; const d=await db.collection('topics').doc(ctx.match[1]).get(); return ctx.reply(`🎯 Current Ads: ${d.exists?(d.data().adsRequired||1):1}\n\nনতুন Ads count পাঠান:`); });
+bot.action(/^av_append:(.+)$/, async ctx=>{
+  if(!adminOnly(ctx)) return ctx.answerCbQuery('❌');
+  const id = ctx.match[1];
+  const d = await db.collection('topics').doc(id).get();
+  if (!d.exists) return ctx.answerCbQuery('❌ Topic পাওয়া যায়নি');
+  await ctx.answerCbQuery();
+  startAppendVideoWorkflow(ctx.from.id, id);
+  const t = d.data();
+  return ctx.reply(`📼 নতুন ভিডিওটি পাঠান, এটি এই Topic-এই যুক্ত হবে:\n\n📌 ${t.title||'নামবিহীন'}\n📹 বর্তমান ভিডিও: ${t.videoCount||0}`);
+});
+bot.action(/^av_duplicate:(.+)$/, async ctx=>{
+  if(!adminOnly(ctx)) return ctx.answerCbQuery('❌');
+  const id = ctx.match[1];
+  const d = await db.collection('topics').doc(id).get();
+  if (!d.exists) return ctx.answerCbQuery('❌ Topic পাওয়া যায়নি');
+  await ctx.answerCbQuery();
+  const t = d.data();
+  startDuplicateTopicWorkflow(ctx.from.id, { id, title: t.title, thumbnail: t.thumbnail, adsRequired: t.adsRequired });
+  return ctx.reply(`🧬 Duplicate করা হচ্ছে: ${t.title||'নামবিহীন'}\n\nটাইটেল, থাম্বনেইল ও অ্যাড কাউন্ট একই থাকবে — শুধু নতুন ভিডিও(গুলো) পাঠান।\n\nএক বা একাধিক ভিডিও পাঠান, শেষ হলে /done লিখুন।`);
+});
 bot.action(/^av_delete:(.+)$/, async ctx=>{
   if(!adminOnly(ctx)) return ctx.answerCbQuery('❌');
   const id = ctx.match[1];
@@ -1679,7 +1940,7 @@ bot.action(/^av_delete_confirm:(.+)$/, async ctx=>{
   await ctx.answerCbQuery('Deleted');
   return ctx.editMessageText('✅ Video/Topic delete হয়েছে।', Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'adm_list')]]));
 });
-bot.action(/^apost_topic:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); const channels=await getChannels(); const rows=channels.filter(c=>c.active!==false).map(c=>[Markup.button.callback(`📢 ${String(c.name||c.channelId).slice(0,35)}`,`apostch_topic:${c.id||c.channelId}:${ctx.match[1]}`)]); if(!rows.length&&POST_CHANNEL)rows.push([Markup.button.callback('📢 Default Channel',`apostch_topic:${POST_CHANNEL}:${ctx.match[1]}`)]); rows.push([Markup.button.callback('⬅️ Back','aview:'+ctx.match[1])]); await ctx.answerCbQuery(); return ctx.editMessageText('📤 SELECT CHANNEL FOR THIS VIDEO',Markup.inlineKeyboard(rows)); });
+bot.action(/^apost_topic:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); const topicId=ctx.match[1]; channelPickData[ctx.from.id]={mode:'topic_post',topicId,selected:new Set()}; await ctx.answerCbQuery(); return renderChannelPicker(ctx); });
 bot.action(/^apostch_topic:([^:]+):(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); delete adminVideoData[ctx.from.id]; let ch=ctx.match[1]; const doc=await db.collection('channels').doc(ch).get(); if(doc.exists)ch=doc.data().channelId; const topicId=ctx.match[2]; const td=await db.collection('topics').doc(topicId).get(); if(!td.exists)return ctx.answerCbQuery('❌ Video নেই'); const t=td.data(); const fileId=(t.videos&&t.videos[0])||t.videoId||''; if(!fileId)return ctx.answerCbQuery('❌ Video file পাওয়া যায়নি'); const kb=await buildConfiguredPostKeyboard(topicId); await ctx.answerCbQuery('Posting...'); try{const sent=await bot.telegram.sendVideo(ch,fileId,{caption:t.title||'',reply_markup:kb.reply_markup}); await recordTopicPost(topicId,ch,sent.message_id,'video',t.title||'',t.title||''); return ctx.reply(`✅ Post হয়েছে\n📢 ${ch}\n🆔 Message ID: ${sent.message_id}`, { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup });}catch(e){return ctx.reply('❌ Channel-এ post করা যায়নি: '+e.message);} });
 
 // =============================================
@@ -2041,6 +2302,22 @@ async function searchUsers(query) {
     }
   }
   return results;
+}
+
+// 🔍 Topic Search — search cached topics by title (case-insensitive
+// substring) or exact/partial Topic ID, so the admin doesn't have to
+// scroll through every topic to find one.
+async function searchTopics(query) {
+  const q = String(query || '').trim();
+  if (!q) return [];
+  const topics = await getTopicsCached();
+  const needle = q.toLowerCase();
+  const results = topics.filter(t => {
+    const title = String(t.title || '').toLowerCase();
+    const id = String(t.id || '').toLowerCase();
+    return title.includes(needle) || id.includes(needle);
+  });
+  return results.slice(0, 20);
 }
 
 async function sendUserPage(ctx, docs, page) {
@@ -2419,14 +2696,10 @@ bot.on('text', async (ctx) => {
     const topicId = text.trim();
     if (state.step === 'post_id') {
       const td = await db.collection('topics').doc(topicId).get();
-      if (!td.exists) return ctx.reply('❌ এই Video/Topic ID পাওয়া যায়নি। আবার ID পাঠান।');
-      const channels = await getChannels();
-      const rows = channels.filter(c => c.active !== false).map(c => [Markup.button.callback(`📢 ${String(c.name || c.channelId).slice(0,35)}`, `apostch_topic:${c.id || c.channelId}:${topicId}`)]);
-      if (!rows.length && POST_CHANNEL) rows.push([Markup.button.callback('📢 Default Channel', `apostch_topic:${POST_CHANNEL}:${topicId}`)]);
-      if (!rows.length) return ctx.reply('❌ কোনো Posting Channel সেট করা নেই।');
-      state.topicId = topicId;
-      state.step = 'waiting_channel';
-      return ctx.reply(`📤 Video/Topic: ${td.data().title || 'নামবিহীন'}\n🆔 ${topicId}\n\nকোন Channel-এ Post করবেন?`, Markup.inlineKeyboard(rows));
+      if (!td.exists) return ctx.reply('❌ এই Video/Topic ID পাওয়া যায়নি। আবার ID পাঠান।');
+      delete adminVideoData[userId];
+      channelPickData[userId] = { mode: 'topic_post', topicId, selected: new Set() };
+      return renderChannelPicker(ctx);
     }
     if (state.step === 'delete_id') {
       const td = await db.collection('topics').doc(topicId).get();
@@ -2585,6 +2858,36 @@ bot.on('text', async (ctx) => {
       console.error('❌ User search error:', error.message);
       return ctx.reply('❌ খুঁজতে সমস্যা হয়েছে: ' + error.message);
     }
+  }
+
+  if (topicSearchData[userId] && topicSearchData[userId].step === 'query') {
+    delete topicSearchData[userId];
+    await ctx.reply('🔍 খোঁজা হচ্ছে...');
+    try {
+      const results = await searchTopics(text);
+      if (!results.length) return ctx.reply('📭 এই নামে/ID-তে কোনো Topic পাওয়া যায়নি।');
+      const rows = results.map(t => {
+        const label = `📌 ${String(t.title || 'নামবিহীন').slice(0, 40)} (${Number(t.videoCount || (Array.isArray(t.videos) ? t.videos.length : 0)) || 0} 📹)`;
+        return [Markup.button.callback(label, 'aview:' + t.id)];
+      });
+      return ctx.reply(`🔍 ফলাফল (${results.length}টি):`, Markup.inlineKeyboard(rows));
+    } catch (error) {
+      console.error('❌ Topic search error:', error.message);
+      return ctx.reply('❌ খুঁজতে সমস্যা হয়েছে: ' + error.message);
+    }
+  }
+
+  if (appendVideoData[userId] && appendVideoData[userId].step === 'topicId') {
+    const topicId = text.trim();
+    const doc = await db.collection('topics').doc(topicId).get();
+    if (!doc.exists) {
+      return ctx.reply('❌ এই Topic ID পাওয়া যায়নি। আবার ID পাঠান, বা Topic Search ব্যবহার করুন।');
+    }
+    const t = doc.data();
+    appendVideoData[userId] = { step: 'video', topicId };
+    return ctx.reply(
+      `📌 Topic পাওয়া গেছে: ${t.title || 'নামবিহীন'}\n📹 বর্তমান ভিডিও: ${t.videoCount || 0}\n\nএখন নতুন ভিডিওটি পাঠান, এটি এই Topic-এই যুক্ত হবে (Title/Thumbnail একই থাকবে):`
+    );
   }
 
   if (broadcastData[userId]) {
@@ -2765,6 +3068,57 @@ async function saveVideo(ctx, data) {
     console.error('Error saving video:', error);
     await ctx.reply('❌ ভিডিও সেভ করতে সমস্যা হয়েছে।');
   }
+}
+
+// 🧬 Duplicate Topic — copies title/thumbnail/adsRequired from the source
+// topic so the admin only has to send the new video(s), instead of typing
+// everything again.
+async function saveDuplicateTopic(ctx, data) {
+  try {
+    const topicRef = db.collection('topics').doc();
+    await topicRef.set({
+      title: data.title,
+      thumbnail: data.thumbnail,
+      videos: data.videos,
+      adsRequired: data.adsRequired,
+      type: data.videos.length > 1 ? 'multi' : 'single',
+      videoCount: data.videos.length,
+      unlockCount: 0,
+      postRecords: [],
+      sortOrder: Date.now(),
+      createdAt: new Date().toISOString(),
+      duplicatedFrom: data.sourceId || null
+    });
+    invalidateTopicsCache();
+    await ctx.reply(
+      `✅ Topic Duplicate হয়ে গেছে!\n\n📌 ${data.title}\n📹 ভিডিও সংখ্যা: ${data.videos.length}\n🔢 অ্যাড প্রয়োজন: ${data.adsRequired}\n🆔 নতুন টপিক আইডি: <code>${topicRef.id}</code>\n\n(Title/Thumbnail/Ads পুরোনো টপিক থেকে কপি করা হয়েছে।)`,
+      { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup }
+    );
+  } catch (error) {
+    console.error('Error saving duplicated topic:', error);
+    await ctx.reply('❌ Duplicate Topic সেভ করতে সমস্যা হয়েছে।');
+  }
+}
+
+// ➕ Append Video to an existing Topic — keeps the same title/thumbnail/ads,
+// just grows the videos array (and flips type to 'multi' once there's more
+// than one video).
+async function appendVideoToTopic(topicId, storedFileId) {
+  const ref = db.collection('topics').doc(String(topicId));
+  const snap = await ref.get();
+  if (!snap.exists) return null;
+  const data = snap.data() || {};
+  const videos = Array.isArray(data.videos) ? data.videos.slice() : [];
+  videos.push(storedFileId);
+  const update = {
+    videos,
+    videoCount: videos.length,
+    type: videos.length > 1 ? 'multi' : (data.type || 'single'),
+    updatedAt: new Date().toISOString()
+  };
+  await ref.update(update);
+  invalidateTopicsCache();
+  return { id: topicId, title: data.title || 'নামবিহীন', videoCount: videos.length };
 }
 
 // ============ API ENDPOINTS ============
@@ -3145,6 +3499,50 @@ if (SELF_URL) {
   }, 10 * 60 * 1000);
   console.log(`🔁 Self-ping enabled for ${SELF_URL}/health`);
 }
+
+// =============================================
+// 📊 DAILY SUMMARY AUTO-MESSAGE — every night at 00:00 (Asia/Dhaka),
+// the bot itself sends the admin a recap of the day that just ended:
+// new users, ad views, and topic unlocks. No manual checking needed.
+// =============================================
+cron.schedule('0 0 * * *', async () => {
+  try {
+    if (!ADMIN_ID) return;
+
+    // The cron fires right as the Dhaka date rolls over, so "today" per
+    // getDhakaDateKey() is already the NEW day — we want the day that just
+    // finished, i.e. yesterday in Dhaka time.
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const dateKey = getDhakaDateKey(yesterday);
+
+    const [dailyStatsDoc, adStatsDoc, topics] = await Promise.all([
+      db.collection('system').doc('dailyStats').get(),
+      db.collection('system').doc('adStats').get(),
+      getTopicsCached()
+    ]);
+
+    const newUsers = Number((dailyStatsDoc.exists && dailyStatsDoc.data().newUsersByDate || {})[dateKey]) || 0;
+    const adViews = Number((adStatsDoc.exists && adStatsDoc.data().adViewsByDate || {})[dateKey]) || 0;
+    const unlocks = topics.reduce((sum, t) => sum + (t.dailyUnlockDate === dateKey ? (Number(t.dailyUnlockCount) || 0) : 0), 0);
+
+    const cpm = await getAdCpm();
+    const estRevenue = (adViews / 1000) * cpm;
+
+    const text =
+      `📊 DAILY SUMMARY — ${dateKey}\n\n` +
+      `👥 নতুন User: ${newUsers}\n` +
+      `📺 Ad Views: ${adViews.toLocaleString('en-US')}\n` +
+      `🔓 Topic Unlock: ${unlocks.toLocaleString('en-US')}\n` +
+      `💵 আনুমানিক আয়: ${estRevenue.toFixed(2)} ৳`;
+
+    await safeSendMessage(ADMIN_ID, text, {
+      reply_markup: Markup.inlineKeyboard([[Markup.button.callback('📊 Full Analytics', 'adm_dashboard')]]).reply_markup
+    });
+    console.log(`📊 Daily summary sent for ${dateKey}`);
+  } catch (error) {
+    console.error('❌ Daily summary cron error:', error.message);
+  }
+}, { timezone: 'Asia/Dhaka' });
 
 // =============================================
 // 🧹 CLEANUP CRON (light: every 2 minutes)
