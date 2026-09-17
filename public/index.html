@@ -461,7 +461,8 @@ function loadUnlocked(){
       userHistory=Array.isArray(data.history)?data.history:(data.topics||[]);
       window.adProgress=Object.assign({},data.adProgress||{});
       renderHome();
-      if(currentTopic) renderSingle(currentTopic);
+      var singleVisible=document.getElementById('singleView').style.display==='block';
+      if(currentTopic&&singleVisible)renderSingle(currentTopic);
     }).catch(function(){renderHome()});
 }
 
@@ -538,7 +539,6 @@ async function recordAd(button){
     if(data.unlocked){
       isWatching=false;
       await loadUnlocked();
-      if(currentTopic)renderSingle(currentTopic);
       return;
     }
     isWatching=false;

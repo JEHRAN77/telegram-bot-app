@@ -729,7 +729,8 @@ async function sendAdminPanel(ctx, edit = false) {
     [Markup.button.callback('📢 Channels', 'adm_channels'), Markup.button.callback('📤 Create Post', 'adm_create_post')],
     [Markup.button.callback('👥 Users', 'adm_users'), Markup.button.callback('📺 Ads', 'adm_ads')],
     [Markup.button.callback('📣 Broadcast', 'adm_broadcast'), Markup.button.callback('🔘 Post Buttons', 'adm_buttons')],
-    [Markup.button.callback('💰 Revenue', 'adm_revenue'), Markup.button.callback('📦 Export Data', 'adm_export')]
+    [Markup.button.callback('💰 Revenue', 'adm_revenue'), Markup.button.callback('📦 Export Data', 'adm_export')],
+    [Markup.button.callback('🕒 Scheduled Posts', 'adm_scheduled')]
   ]);
   if (edit && ctx.callbackQuery?.message) {
     return ctx.editMessageText(text, keyboard).catch(() => ctx.reply(text, keyboard));
@@ -855,6 +856,59 @@ async function forwardPhotoToStorageChannel(ctx, fileId) {
 
 function getDhakaDateKey(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Dhaka', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+}
+
+// 🕒 Post Schedule: Bangladesh (Asia/Dhaka) is UTC+6 year-round, no DST, so we
+// can convert admin-entered time to a UTC epoch with simple fixed-offset math
+// instead of needing a timezone library.
+const DHAKA_OFFSET_MS = 6 * 60 * 60 * 1000;
+
+// Accepts either a full date+time ("2026-09-20 9:30 PM" / "2026-09-20 21:30")
+// or just a time ("9:30 PM" / "09:30 PM" / "21:30") — when the date is left
+// out, it defaults to the next upcoming occurrence of that time (today if it
+// hasn't passed yet in Dhaka time, otherwise tomorrow), so the admin doesn't
+// have to type the date every time for same-day/next-occurrence schedules.
+function parseDhakaDateTime(text) {
+  const raw = String(text || '').trim();
+  const timeRe = /(\d{1,2}):(\d{2})\s*([AaPp][Mm])?$/;
+  const timeMatch = raw.match(timeRe);
+  if (!timeMatch) return null;
+
+  let [, hStr, minStr, ampm] = timeMatch;
+  let h = Number(hStr), min = Number(minStr);
+  if (min > 59) return null;
+  if (ampm) {
+    if (h < 1 || h > 12) return null;
+    ampm = ampm.toUpperCase();
+    if (ampm === 'AM') h = (h === 12) ? 0 : h;
+    else h = (h === 12) ? 12 : h + 12;
+  } else if (h > 23) {
+    return null;
+  }
+
+  const datePart = raw.slice(0, timeMatch.index).trim();
+  if (datePart) {
+    const dm = datePart.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!dm) return null;
+    const [, y, mo, d] = dm.map(Number);
+    if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+    const utcMs = Date.UTC(y, mo - 1, d, h, min) - DHAKA_OFFSET_MS;
+    return Number.isFinite(utcMs) ? utcMs : null;
+  }
+
+  // No date given — use the next upcoming occurrence of this time, Dhaka time.
+  const todayKey = getDhakaDateKey();
+  const [ty, tm, td] = todayKey.split('-').map(Number);
+  let utcMs = Date.UTC(ty, tm - 1, td, h, min) - DHAKA_OFFSET_MS;
+  if (utcMs <= Date.now()) utcMs += 24 * 60 * 60 * 1000; // already passed today → tomorrow
+  return utcMs;
+}
+
+function formatDhakaDateTime(ms) {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Dhaka', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: 'numeric', minute: '2-digit', hour12: true
+  }).format(new Date(ms)) + ' (Dhaka সময়)';
 }
 
 // =============================================
@@ -1400,6 +1454,21 @@ async function getRepostPostsForChannel(channelId) {
     .sort((a,b) => (Number(b.postedAt)||0) - (Number(a.postedAt)||0));
 }
 
+bot.action('post_schedule', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('❌ অনুমতি নেই');
+  const userId = ctx.from.id;
+  const state = postData[userId];
+  if (!state || state.step !== 'confirm' || !state.fileId || !state.topicId) {
+    return ctx.answerCbQuery('❌ Post data পাওয়া যায়নি। /post দিয়ে আবার শুরু করুন');
+  }
+  state.step = 'schedule_time';
+  try { await ctx.answerCbQuery(); } catch (e) {}
+  return ctx.reply(
+    `🕒 কখন Post হবে লিখুন (ঢাকা সময়):\n\nশুধু সময় দিলেই হবে (আজ/আগামীকাল automatic বুঝে নেবে):\n<code>9:30 PM</code>\n\nঅথবা নির্দিষ্ট তারিখসহ:\n<code>2026-09-20 9:30 PM</code>`,
+    { parse_mode: 'HTML' }
+  );
+});
+
 bot.action('post_confirm', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('❌ অনুমতি নেই');
   const userId = ctx.from.id;
@@ -1832,6 +1901,30 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
     } catch (error) {
       console.error('❌ Export error:', error.message);
       return ctx.reply('❌ Export করতে সমস্যা হয়েছে: ' + error.message);
+    }
+  }
+  if (action === 'scheduled') {
+    try {
+      const snap = await db.collection('scheduledPosts')
+        .where('status', '==', 'pending')
+        .orderBy('scheduledAt', 'asc')
+        .limit(20)
+        .get();
+      if (snap.empty) {
+        return ctx.editMessageText('📭 কোনো Scheduled Post নেই।', Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'adm_home')]]));
+      }
+      const rows = [];
+      let text = '🕒 SCHEDULED POSTS\n\n';
+      snap.docs.forEach((d, i) => {
+        const sp = d.data();
+        text += `${i + 1}. 🆔 Topic: ${sp.topicId} | 📅 ${formatDhakaDateTime(sp.scheduledAt)} | 📢 ${(sp.channels || []).length}টি Channel\n`;
+        rows.push([Markup.button.callback(`❌ Cancel #${i + 1}`, `schedcancel:${d.id}`)]);
+      });
+      rows.push([Markup.button.callback('⬅️ Back', 'adm_home')]);
+      return ctx.editMessageText(text, Markup.inlineKeyboard(rows));
+    } catch (error) {
+      console.error('❌ Scheduled list error:', error.message);
+      return ctx.reply('❌ তালিকা আনতে সমস্যা হয়েছে: ' + error.message + '\n\n(Firestore-এ একটা composite index লাগতে পারে — Render/console log-এ যে link আসবে সেটায় ক্লিক করলেই index তৈরি হয়ে যাবে।)');
     }
   }
   if (action === 'bulk_topics') { return renderBulkTopicsPanel(ctx); }
@@ -2352,6 +2445,22 @@ bot.action(/^blkpage:(prev|next)$/, async (ctx) => {
   return renderBulkTopicsPanel(ctx);
 });
 
+bot.action(/^schedcancel:(.+)$/, async (ctx) => {
+  if (!adminOnly(ctx)) return ctx.answerCbQuery('❌ অনুমতি নেই');
+  const id = ctx.match[1];
+  try {
+    await db.collection('scheduledPosts').doc(id).set({ status: 'cancelled' }, { merge: true });
+    const timer = scheduledTimers.get(id);
+    if (timer) { clearTimeout(timer); scheduledTimers.delete(id); }
+    try { await ctx.answerCbQuery('✅ বাতিল হয়েছে'); } catch (e) {}
+  } catch (error) {
+    console.error('❌ schedcancel error:', error.message);
+    try { await ctx.answerCbQuery('❌ সমস্যা হয়েছে'); } catch (e) {}
+    return;
+  }
+  return sendAdminPanel(ctx, false);
+});
+
 bot.action(/^ublk:(.+)$/, async (ctx) => {
   if (!adminOnly(ctx)) return ctx.answerCbQuery('❌ অনুমতি নেই');
   const targetId = ctx.match[1];
@@ -2681,12 +2790,45 @@ bot.on('text', async (ctx) => {
         `🆔 Video/Topic ID: ${state.topicId}\n` +
         `📝 Caption: ${state.caption || '(কোনো caption নেই)'}\n\n` +
         `Buttons:\n▶️ ভিডিও দেখুন\nHelp Admin\n\n` +
-        `সব ঠিক থাকলে Post চাপুন।`,
+        `সব ঠিক থাকলে Post চাপুন, অথবা পরে নির্দিষ্ট সময়ে Post করতে Schedule বাটন চাপুন।`,
         Markup.inlineKeyboard([
           [Markup.button.callback('✅ Post Now', 'post_confirm')],
+          [Markup.button.callback('🕒 Schedule করুন', 'post_schedule')],
           [Markup.button.callback('❌ Cancel', 'post_cancel')]
         ])
       );
+    }
+
+    if (state.step === 'schedule_time') {
+      const parsed = parseDhakaDateTime(text);
+      if (!parsed) {
+        return ctx.reply('❌ সময়ের ফরম্যাট বোঝা যায়নি।\n\nএভাবে লিখুন:\n<code>9:30 PM</code> (আজ/আগামীকাল automatic)\nঅথবা\n<code>2026-09-20 9:30 PM</code>', { parse_mode: 'HTML' });
+      }
+      if (parsed <= Date.now() + 60 * 1000) {
+        return ctx.reply('❌ সময়টা এখন থেকে অন্তত ১ মিনিট পরে হতে হবে। আবার লিখুন:');
+      }
+      try {
+        const docRef = await db.collection('scheduledPosts').add({
+          channels: (state.channels && state.channels.length) ? state.channels : (POST_CHANNEL ? [POST_CHANNEL] : []),
+          type: state.type,
+          fileId: state.fileId,
+          caption: state.caption || '',
+          topicId: state.topicId,
+          scheduledAt: parsed,
+          status: 'pending',
+          createdBy: userId,
+          createdAt: Date.now()
+        });
+        delete postData[userId];
+        schedulePostTimer(docRef.id, parsed - Date.now());
+        return ctx.reply(
+          `✅ Post Schedule হয়েছে!\n\n🆔 Schedule ID: <code>${docRef.id}</code>\n📅 সময়: ${formatDhakaDateTime(parsed)}\n\nনির্ধারিত সময়ে এটা নিজে থেকেই Channel-এ Post হয়ে যাবে।`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup }
+        );
+      } catch (error) {
+        console.error('❌ Schedule save error:', error.message);
+        return ctx.reply('❌ Schedule সেভ করতে সমস্যা হয়েছে: ' + error.message);
+      }
     }
   }
 
@@ -3378,6 +3520,7 @@ app.post('/api/ad-complete', async (req, res) => {
     const today = getDhakaDateKey();
     const result = await db.runTransaction(async tx => {
       const snap = await tx.get(userRef);
+      const isNewUser = !snap.exists;
       const data = snap.exists ? snap.data() : {};
       const progress = { ...(data.adProgress || {}) };
       const unlockedTopics = data.unlockedTopics || [];
@@ -3389,7 +3532,34 @@ app.post('/api/ad-complete', async (req, res) => {
 
       const next = Math.min(current + 1, required);
       progress[topicId] = next;
-      tx.set(userRef, { adProgress: progress, dailyAdDate: today, dailyAdsUsed: dailyUsed + 1 }, { merge: true });
+
+      const userWrite = { adProgress: progress, dailyAdDate: today, dailyAdsUsed: dailyUsed + 1 };
+      if (isNewUser) {
+        // 🐛 FIX: this is the FIRST-EVER Firestore doc for this user in many
+        // cases (anyone who opens the Mini App and watches an ad before ever
+        // hitting /start). Previously this created a bare-bones doc here
+        // with none of the usual default fields, and — critically — never
+        // told the Daily Summary a new user had shown up, since only
+        // getOrCreateUser() (called from /start) used to do that counting.
+        // By the time /start ran later, the doc already existed, so it was
+        // never counted as "new" there either. Net effect: the Daily
+        // Summary's new-user number was silently wrong for most real users,
+        // since this bot's primary entry point is the Mini App, not /start.
+        Object.assign(userWrite, {
+          userId,
+          verified: false,
+          verifiedAt: null,
+          createdAt: new Date().toISOString(),
+          unlockedTopics: [],
+          topicUnlockTime: {},
+          sentMessages: [],
+          cleanupDueAt: null
+        });
+        tx.set(db.collection('system').doc('dailyStats'), {
+          ['newUsersByDate.' + today]: admin.firestore.FieldValue.increment(1)
+        }, { merge: true });
+      }
+      tx.set(userRef, userWrite, { merge: true });
       return { count: next, required, unlocked: next >= required, limitReached: false, dailyUsed: dailyUsed + 1, adViewCounted: true };
     });
 
@@ -3499,6 +3669,111 @@ if (SELF_URL) {
   }, 10 * 60 * 1000);
   console.log(`🔁 Self-ping enabled for ${SELF_URL}/health`);
 }
+
+// =============================================
+// 🕒 SCHEDULED POSTS — fires exactly on time via an in-memory timer set the
+// moment a post is scheduled (no repeated Firestore polling/reads). A very
+// infrequent safety-net cron below only exists to catch posts that were due
+// while the server happened to be restarting (timers don't survive that).
+// =============================================
+const scheduledTimers = new Map(); // docId -> Node timeout handle
+const MAX_TIMEOUT_MS = 20 * 24 * 60 * 60 * 1000; // Node setTimeout overflows past ~24.8 days
+
+async function firePostSchedule(docId) {
+  scheduledTimers.delete(docId);
+  const ref = db.collection('scheduledPosts').doc(docId);
+  const doc = await ref.get();
+  if (!doc.exists || doc.data().status !== 'pending') return; // cancelled or already sent
+
+  const sp = doc.data();
+  const now = Date.now();
+  const channels = Array.isArray(sp.channels) && sp.channels.length ? sp.channels : (POST_CHANNEL ? [POST_CHANNEL] : []);
+  const lines = [];
+  try {
+    const keyboard = await buildConfiguredPostKeyboard(sp.topicId);
+    for (const channelId of channels) {
+      try {
+        let sent;
+        if (sp.type === 'video') {
+          sent = await bot.telegram.sendVideo(channelId, sp.fileId, { caption: sp.caption || undefined, reply_markup: keyboard.reply_markup });
+        } else {
+          sent = await bot.telegram.sendPhoto(channelId, sp.fileId, { caption: sp.caption || undefined, reply_markup: keyboard.reply_markup });
+        }
+        await recordTopicPost(sp.topicId, channelId, sent.message_id, sp.type, sp.caption || '', sp.topicId);
+        lines.push(`✅ ${channelId} — Message ID: ${sent.message_id}`);
+      } catch (chErr) {
+        console.error(`❌ Scheduled post error [${channelId}]:`, chErr.message);
+        lines.push(`❌ ${channelId} — ${chErr.message}`);
+      }
+    }
+    await ref.set({ status: 'sent', sentAt: now, result: lines }, { merge: true });
+  } catch (err) {
+    console.error('❌ Scheduled post failed:', docId, err.message);
+    await ref.set({ status: 'failed', error: err.message, sentAt: now }, { merge: true }).catch(() => {});
+    lines.push(`❌ সম্পূর্ণ ব্যর্থ: ${err.message}`);
+  }
+  if (ADMIN_ID) {
+    await safeSendMessage(
+      ADMIN_ID,
+      `🕒 Scheduled Post সম্পন্ন হয়েছে\n\n🆔 Video/Topic ID: ${sp.topicId}\n\n${lines.join('\n')}`,
+      { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup }
+    ).catch(() => {});
+  }
+}
+
+// Arms (or re-arms, in MAX_TIMEOUT_MS-sized chunks for far-future posts) an
+// in-memory timer for one scheduled post. Safe to call multiple times for
+// the same docId — it always clears any existing timer first.
+function schedulePostTimer(docId, delayMs) {
+  const existing = scheduledTimers.get(docId);
+  if (existing) clearTimeout(existing);
+  const chunk = Math.min(Math.max(delayMs, 0), MAX_TIMEOUT_MS);
+  const remaining = delayMs - chunk;
+  const handle = setTimeout(() => {
+    if (remaining > 0) schedulePostTimer(docId, remaining);
+    else firePostSchedule(docId).catch(e => console.error('❌ firePostSchedule error:', e.message));
+  }, chunk);
+  scheduledTimers.set(docId, handle);
+}
+
+// On boot: pick up anything still pending (covers posts that were due while
+// the server was restarting, and re-arms timers for future ones) — this is
+// the ONLY bulk Firestore read this feature does under normal operation.
+(async function recoverScheduledPosts() {
+  try {
+    const snap = await db.collection('scheduledPosts').where('status', '==', 'pending').get();
+    const now = Date.now();
+    snap.docs.forEach(doc => {
+      const scheduledAt = Number(doc.data().scheduledAt) || 0;
+      if (scheduledAt <= now) firePostSchedule(doc.id).catch(e => console.error('❌ firePostSchedule error:', e.message));
+      else schedulePostTimer(doc.id, scheduledAt - now);
+    });
+  } catch (error) {
+    console.error('❌ recoverScheduledPosts error:', error.message);
+  }
+})();
+
+// Safety net only — catches the rare case of a lost in-memory timer without
+// a full restart. Runs once every 30 minutes, not every minute, to keep
+// Firestore reads minimal (this is a deliberate trade-off: worst case a
+// missed post fires up to ~30 minutes late instead of never).
+cron.schedule('*/30 * * * *', async () => {
+  try {
+    const now = Date.now();
+    const dueSnap = await db.collection('scheduledPosts')
+      .where('status', '==', 'pending')
+      .where('scheduledAt', '<=', now)
+      .limit(20)
+      .get();
+    for (const doc of dueSnap.docs) {
+      if (!scheduledTimers.has(doc.id)) {
+        await firePostSchedule(doc.id);
+      }
+    }
+  } catch (error) {
+    console.error('❌ Scheduled post safety-net cron error:', error.message);
+  }
+});
 
 // =============================================
 // 📊 DAILY SUMMARY AUTO-MESSAGE — every night at 00:00 (Asia/Dhaka),
