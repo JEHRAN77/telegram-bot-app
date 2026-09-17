@@ -3715,10 +3715,30 @@ const MAX_TIMEOUT_MS = 20 * 24 * 60 * 60 * 1000; // Node setTimeout overflows pa
 async function firePostSchedule(docId) {
   scheduledTimers.delete(docId);
   const ref = db.collection('scheduledPosts').doc(docId);
-  const doc = await ref.get();
-  if (!doc.exists || doc.data().status !== 'pending') return; // cancelled or already sent
 
-  const sp = doc.data();
+  // 🐛 FIX: this used to be a plain read-then-act (get() → check status →
+  // publish → set 'sent'), which is NOT atomic. If the server restarted
+  // (e.g. Render waking back up) while a post was due, both the startup
+  // recovery pass and the 30-min safety-net cron could read status:'pending'
+  // before either had a chance to write 'sent' — so both proceeded to
+  // actually publish, sending the same post to the channel twice. Claiming
+  // it inside a transaction (flip 'pending' → 'sending' atomically) means
+  // only one caller can ever win the race.
+  let sp = null;
+  try {
+    sp = await db.runTransaction(async (tx) => {
+      const doc = await tx.get(ref);
+      if (!doc.exists || doc.data().status !== 'pending') return null;
+      const data = doc.data();
+      tx.set(ref, { status: 'sending', claimedAt: Date.now() }, { merge: true });
+      return data;
+    });
+  } catch (e) {
+    console.error('❌ firePostSchedule claim error:', e.message);
+    return;
+  }
+  if (!sp) return; // already claimed by another call, cancelled, or already sent
+
   const now = Date.now();
   const channels = Array.isArray(sp.channels) && sp.channels.length ? sp.channels : (POST_CHANNEL ? [POST_CHANNEL] : []);
   const lines = [];
@@ -3815,6 +3835,20 @@ cron.schedule('*/30 * * * *', async () => {
       if (!scheduledTimers.has(doc.id)) {
         await firePostSchedule(doc.id);
       }
+    }
+
+    // Recover posts stuck mid-send (the process crashed between claiming
+    // and finishing — extremely rare, but without this they'd stay
+    // 'sending' forever and never retry).
+    const stuckCutoff = now - 10 * 60 * 1000;
+    const stuckSnap = await db.collection('scheduledPosts')
+      .where('status', '==', 'sending')
+      .where('claimedAt', '<=', stuckCutoff)
+      .limit(20)
+      .get();
+    for (const doc of stuckSnap.docs) {
+      await doc.ref.set({ status: 'pending' }, { merge: true });
+      firePostSchedule(doc.id).catch(e => console.error('❌ firePostSchedule retry error:', e.message));
     }
   } catch (error) {
     console.error('❌ Scheduled post safety-net cron error:', error.message);
