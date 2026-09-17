@@ -181,6 +181,28 @@ const SINGLE_TOPIC_CACHE_TTL = 60 * 1000;
 let singleTopicCache = new Map();
 let singleTopicRefresh = new Map();
 let fileLinkCache = new Map();
+// In-memory byte cache for thumbnails: once an image is fetched from Telegram
+// once, we keep the actual bytes here so every later request (any user) is
+// served instantly from our own server instead of round-tripping to
+// Telegram's CDN again. Capped so memory usage stays bounded.
+const THUMB_BYTES_CACHE_MAX = 400;
+let thumbBytesCache = new Map(); // fileId -> { buf, type }
+function cacheThumbBytes(fileId, buf, type) {
+  if (thumbBytesCache.has(fileId)) thumbBytesCache.delete(fileId);
+  thumbBytesCache.set(fileId, { buf, type });
+  if (thumbBytesCache.size > THUMB_BYTES_CACHE_MAX) {
+    thumbBytesCache.delete(thumbBytesCache.keys().next().value);
+  }
+}
+// Telegram sends several resolutions for every photo. We used to keep the
+// largest one as the "thumbnail", which meant every card in the mini app grid
+// was downloading a full-size photo. This picks a size around ~480px wide —
+// plenty sharp for a card thumbnail, but a fraction of the file size.
+function pickThumbPhotoSize(sizes) {
+  if (!Array.isArray(sizes) || !sizes.length) return null;
+  const sorted = [...sizes].sort((a, b) => (a.width || 0) - (b.width || 0));
+  return sorted.find(s => (s.width || 0) >= 480) || sorted[sorted.length - 1];
+}
 let dailyLimitCache = DEFAULT_DAILY_AD_LIMIT;
 let dailyLimitCacheAt = 0;
 let adCpmCache = 0;
@@ -305,9 +327,13 @@ async function getAdCpm() {
 async function recordAdView() {
   try {
     const today = getDhakaDateKey();
+    // set(data, {merge:true}) treats a dotted STRING key like
+    // 'adViewsByDate.2026-09-17' as a literal field name — but a real
+    // nested JS object merges correctly, recursively, without clobbering
+    // other dates. That's the fix: build the nesting as an object.
     await db.collection('system').doc('adStats').set({
       totalAdViews: admin.firestore.FieldValue.increment(1),
-      ['adViewsByDate.' + today]: admin.firestore.FieldValue.increment(1)
+      adViewsByDate: { [today]: admin.firestore.FieldValue.increment(1) }
     }, { merge: true });
   } catch (e) {
     console.error('❌ recordAdView error:', e.message);
@@ -323,7 +349,7 @@ async function recordRealAdRevenue(amount) {
     const today = getDhakaDateKey();
     await db.collection('system').doc('adStats').set({
       totalRevenueReal: admin.firestore.FieldValue.increment(amount),
-      ['revenueByDate.' + today]: admin.firestore.FieldValue.increment(amount),
+      revenueByDate: { [today]: admin.firestore.FieldValue.increment(amount) },
       totalPostbacksReceived: admin.firestore.FieldValue.increment(1)
     }, { merge: true });
   } catch (e) {
@@ -792,9 +818,12 @@ async function getOrCreateUser(userId, username, firstName, lastName) {
       });
       invalidateAdminStatsCache();
       // 📊 Daily Summary tracking: count of brand-new users, per Dhaka date.
+      // 🐛 FIX: a dotted STRING key with set(merge:true) writes a literal
+      // field named "newUsersByDate.2026-09-17" instead of nesting — a real
+      // nested object merges correctly instead.
       const today = getDhakaDateKey();
       db.collection('system').doc('dailyStats').set({
-        ['newUsersByDate.' + today]: admin.firestore.FieldValue.increment(1)
+        newUsersByDate: { [today]: admin.firestore.FieldValue.increment(1) }
       }, { merge: true }).catch(e => console.error('❌ dailyStats increment error:', e.message));
       return { userId, username, firstName, lastName, verified: false, unlockedTopics: [], topicUnlockTime: {}, sentMessages: [], cleanupDueAt: null };
     }
@@ -847,7 +876,8 @@ async function forwardVideoToStorageChannel(ctx, fileId) {
 async function forwardPhotoToStorageChannel(ctx, fileId) {
   try {
     const forwarded = await ctx.telegram.sendPhoto(STORAGE_CHANNEL, fileId);
-    return forwarded.photo[forwarded.photo.length - 1].file_id;
+    const picked = pickThumbPhotoSize(forwarded.photo) || forwarded.photo[forwarded.photo.length - 1];
+    return picked.file_id;
   } catch (error) {
     console.error('Error forwarding photo:', error);
     throw error;
@@ -1454,6 +1484,44 @@ async function getRepostPostsForChannel(channelId) {
     .sort((a,b) => (Number(b.postedAt)||0) - (Number(a.postedAt)||0));
 }
 
+bot.action(/^sched_repeat:(none|daily|weekly)$/, async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('❌ অনুমতি নেই');
+  const userId = ctx.from.id;
+  const state = postData[userId];
+  if (!state || state.step !== 'schedule_repeat' || !state.scheduleTime) {
+    return ctx.answerCbQuery('❌ Schedule data পাওয়া যায়নি। /post দিয়ে আবার শুরু করুন');
+  }
+  const recurrence = ctx.match[1] === 'none' ? null : ctx.match[1];
+  const parsed = state.scheduleTime;
+  try { await ctx.answerCbQuery(); } catch (e) {}
+  try {
+    const docRef = await db.collection('scheduledPosts').add({
+      channels: (state.channels && state.channels.length) ? state.channels : (POST_CHANNEL ? [POST_CHANNEL] : []),
+      type: state.type,
+      fileId: state.fileId,
+      caption: state.caption || '',
+      topicId: state.topicId,
+      scheduledAt: parsed,
+      recurrence, // null | 'daily' | 'weekly'
+      status: 'pending',
+      createdBy: userId,
+      createdAt: Date.now()
+    });
+    delete postData[userId];
+    schedulePostTimer(docRef.id, parsed - Date.now());
+    const repeatLabel = recurrence === 'daily' ? '\n🔁 প্রতিদিন এই সময়ে repeat হবে (বাতিল না করা পর্যন্ত)।'
+      : recurrence === 'weekly' ? '\n🔁 প্রতি সপ্তাহে এই সময়ে repeat হবে (বাতিল না করা পর্যন্ত)।'
+      : '';
+    return ctx.reply(
+      `✅ Post Schedule হয়েছে!\n\n🆔 Schedule ID: <code>${docRef.id}</code>\n📅 সময়: ${formatDhakaDateTime(parsed)}${repeatLabel}\n\nনির্ধারিত সময়ে এটা নিজে থেকেই Channel-এ Post হয়ে যাবে।`,
+      { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup }
+    );
+  } catch (error) {
+    console.error('❌ Schedule save error:', error.message);
+    return ctx.reply('❌ Schedule সেভ করতে সমস্যা হয়েছে: ' + error.message);
+  }
+});
+
 bot.action('post_schedule', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('❌ অনুমতি নেই');
   const userId = ctx.from.id;
@@ -1917,7 +1985,8 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
       let text = '🕒 SCHEDULED POSTS\n\n';
       snap.docs.forEach((d, i) => {
         const sp = d.data();
-        text += `${i + 1}. 🆔 Topic: ${sp.topicId} | 📅 ${formatDhakaDateTime(sp.scheduledAt)} | 📢 ${(sp.channels || []).length}টি Channel\n`;
+        const repeatTag = sp.recurrence === 'daily' ? ' 🔁Daily' : sp.recurrence === 'weekly' ? ' 🔁Weekly' : '';
+        text += `${i + 1}. 🆔 Topic: ${sp.topicId} | 📅 ${formatDhakaDateTime(sp.scheduledAt)}${repeatTag} | 📢 ${(sp.channels || []).length}টি Channel\n`;
         rows.push([Markup.button.callback(`❌ Cancel #${i + 1}`, `schedcancel:${d.id}`)]);
       });
       rows.push([Markup.button.callback('⬅️ Back', 'adm_home')]);
@@ -2807,31 +2876,18 @@ bot.on('text', async (ctx) => {
       if (parsed <= Date.now() + 60 * 1000) {
         return ctx.reply('❌ সময়টা এখন থেকে অন্তত ১ মিনিট পরে হতে হবে। আবার লিখুন:');
       }
-      try {
-        const docRef = await db.collection('scheduledPosts').add({
-          channels: (state.channels && state.channels.length) ? state.channels : (POST_CHANNEL ? [POST_CHANNEL] : []),
-          type: state.type,
-          fileId: state.fileId,
-          caption: state.caption || '',
-          topicId: state.topicId,
-          scheduledAt: parsed,
-          status: 'pending',
-          createdBy: userId,
-          createdAt: Date.now()
-        });
-        delete postData[userId];
-        schedulePostTimer(docRef.id, parsed - Date.now());
-        return ctx.reply(
-          `✅ Post Schedule হয়েছে!\n\n🆔 Schedule ID: <code>${docRef.id}</code>\n📅 সময়: ${formatDhakaDateTime(parsed)}\n\nনির্ধারিত সময়ে এটা নিজে থেকেই Channel-এ Post হয়ে যাবে।`,
-          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup }
-        );
-      } catch (error) {
-        console.error('❌ Schedule save error:', error.message);
-        return ctx.reply('❌ Schedule সেভ করতে সমস্যা হয়েছে: ' + error.message);
-      }
+      state.scheduleTime = parsed;
+      state.step = 'schedule_repeat';
+      return ctx.reply(
+        `📅 সময়: ${formatDhakaDateTime(parsed)}\n\n🔁 এটা কি বারবার (repeat) post হবে, নাকি একবারই?`,
+        Markup.inlineKeyboard([
+          [Markup.button.callback('একবারই (No Repeat)', 'sched_repeat:none')],
+          [Markup.button.callback('🔁 প্রতিদিন (Daily)', 'sched_repeat:daily')],
+          [Markup.button.callback('🔁 প্রতি সপ্তাহে (Weekly)', 'sched_repeat:weekly')]
+        ])
+      );
     }
   }
-
 
   if (adminVideoData[userId]) {
     const state = adminVideoData[userId];
@@ -3316,8 +3372,19 @@ app.get('/api/topics', async (req, res) => {
 });
 
 app.get('/api/thumbnail/:fileId', async (req, res) => {
+  const fileId = req.params.fileId;
   try {
-    const fileId = req.params.fileId;
+    // Already have the actual image bytes cached in memory — serve instantly,
+    // no round trip to Telegram at all. This is the common case after the
+    // first user has ever opened a given thumbnail.
+    const cached = thumbBytesCache.get(fileId);
+    if (cached) {
+      res.set('Content-Type', cached.type);
+      res.set('Cache-Control', 'public, max-age=604800, immutable');
+      res.set('ETag', fileId);
+      return res.end(cached.buf);
+    }
+
     const now = Date.now();
     let entry = fileLinkCache.get(fileId);
     if (!entry || entry.expiresAt <= now) {
@@ -3329,10 +3396,22 @@ app.get('/api/thumbnail/:fileId', async (req, res) => {
       entry.url = await entry.promise;
       entry.promise = null;
     }
-    res.set('Cache-Control', 'public, max-age=600');
-    return res.redirect(entry.url);
+
+    // Fetch the bytes ourselves (instead of redirecting the browser to
+    // Telegram) so we can cache them for every future request, and so the
+    // user's device only ever talks to our own server.
+    const upstream = await fetch(entry.url.toString());
+    if (!upstream.ok) throw new Error('upstream ' + upstream.status);
+    const type = upstream.headers.get('content-type') || 'image/jpeg';
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    cacheThumbBytes(fileId, buf, type);
+
+    res.set('Content-Type', type);
+    res.set('Cache-Control', 'public, max-age=604800, immutable');
+    res.set('ETag', fileId);
+    return res.end(buf);
   } catch (error) {
-    fileLinkCache.delete(req.params.fileId);
+    fileLinkCache.delete(fileId);
     res.status(404).json({ error: 'Thumbnail not found' });
   }
 });
@@ -3556,7 +3635,7 @@ app.post('/api/ad-complete', async (req, res) => {
           cleanupDueAt: null
         });
         tx.set(db.collection('system').doc('dailyStats'), {
-          ['newUsersByDate.' + today]: admin.firestore.FieldValue.increment(1)
+          newUsersByDate: { [today]: admin.firestore.FieldValue.increment(1) }
         }, { merge: true });
       }
       tx.set(userRef, userWrite, { merge: true });
@@ -3682,10 +3761,30 @@ const MAX_TIMEOUT_MS = 20 * 24 * 60 * 60 * 1000; // Node setTimeout overflows pa
 async function firePostSchedule(docId) {
   scheduledTimers.delete(docId);
   const ref = db.collection('scheduledPosts').doc(docId);
-  const doc = await ref.get();
-  if (!doc.exists || doc.data().status !== 'pending') return; // cancelled or already sent
 
-  const sp = doc.data();
+  // 🐛 FIX: this used to be a plain read-then-act (get() → check status →
+  // publish → set 'sent'), which is NOT atomic. If the server restarted
+  // (e.g. Render waking back up) while a post was due, both the startup
+  // recovery pass and the 30-min safety-net cron could read status:'pending'
+  // before either had a chance to write 'sent' — so both proceeded to
+  // actually publish, sending the same post to the channel twice. Claiming
+  // it inside a transaction (flip 'pending' → 'sending' atomically) means
+  // only one caller can ever win the race.
+  let sp = null;
+  try {
+    sp = await db.runTransaction(async (tx) => {
+      const doc = await tx.get(ref);
+      if (!doc.exists || doc.data().status !== 'pending') return null;
+      const data = doc.data();
+      tx.set(ref, { status: 'sending', claimedAt: Date.now() }, { merge: true });
+      return data;
+    });
+  } catch (e) {
+    console.error('❌ firePostSchedule claim error:', e.message);
+    return;
+  }
+  if (!sp) return; // already claimed by another call, cancelled, or already sent
+
   const now = Date.now();
   const channels = Array.isArray(sp.channels) && sp.channels.length ? sp.channels : (POST_CHANNEL ? [POST_CHANNEL] : []);
   const lines = [];
@@ -3712,6 +3811,19 @@ async function firePostSchedule(docId) {
     await ref.set({ status: 'failed', error: err.message, sentAt: now }, { merge: true }).catch(() => {});
     lines.push(`❌ সম্পূর্ণ ব্যর্থ: ${err.message}`);
   }
+
+  // 🔁 Recurring posts: re-arm for the next occurrence instead of leaving
+  // status as a terminal 'sent'/'failed'. Cancelling (schedcancel:) sets
+  // status to 'cancelled', which the exists-check at the top of this
+  // function already catches before we'd ever get here again.
+  if (sp.recurrence === 'daily' || sp.recurrence === 'weekly') {
+    const intervalMs = (sp.recurrence === 'daily' ? 1 : 7) * 24 * 60 * 60 * 1000;
+    let nextAt = sp.scheduledAt + intervalMs;
+    while (nextAt <= now) nextAt += intervalMs; // catch up if the server was down past one cycle
+    await ref.set({ status: 'pending', scheduledAt: nextAt, lastFiredAt: now }, { merge: true });
+    schedulePostTimer(docId, nextAt - now);
+  }
+
   if (ADMIN_ID) {
     await safeSendMessage(
       ADMIN_ID,
@@ -3769,6 +3881,20 @@ cron.schedule('*/30 * * * *', async () => {
       if (!scheduledTimers.has(doc.id)) {
         await firePostSchedule(doc.id);
       }
+    }
+
+    // Recover posts stuck mid-send (the process crashed between claiming
+    // and finishing — extremely rare, but without this they'd stay
+    // 'sending' forever and never retry).
+    const stuckCutoff = now - 10 * 60 * 1000;
+    const stuckSnap = await db.collection('scheduledPosts')
+      .where('status', '==', 'sending')
+      .where('claimedAt', '<=', stuckCutoff)
+      .limit(20)
+      .get();
+    for (const doc of stuckSnap.docs) {
+      await doc.ref.set({ status: 'pending' }, { merge: true });
+      firePostSchedule(doc.id).catch(e => console.error('❌ firePostSchedule retry error:', e.message));
     }
   } catch (error) {
     console.error('❌ Scheduled post safety-net cron error:', error.message);
@@ -3986,6 +4112,9 @@ bot.launch({
 
 app.listen(process.env.PORT || 3000, () => {
   console.log(`🚀 Server running on port ${process.env.PORT || 3000}`);
+  // Warm the topics cache immediately so the very first user of a fresh
+  // deploy/restart doesn't have to wait on a cold Firestore read.
+  getTopicsCached().catch(() => {});
 });
 
 // Graceful shutdown — Render restart-এ ঝুলে না যায়
