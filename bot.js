@@ -14,6 +14,17 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
+// ✅ Emoji/multi-byte-safe truncate.
+// Plain String.slice() cuts by UTF-16 code units, so it can chop an emoji's
+// surrogate pair in half, leaving a broken lone-surrogate character. When that
+// broken string is sent to Telegram as button text, the API rejects the whole
+// request with "400: inline keyboard button text must be encoded in UTF-8" —
+// which makes the button (and everything after it) silently fail.
+function safeTruncate(str, maxLen) {
+  const chars = Array.from(String(str || ''));
+  return chars.length > maxLen ? chars.slice(0, maxLen).join('') : chars.join('');
+}
+
 // 🚫 NEVER process posts coming from Telegram channels.
 // The bot should only process user/private/group updates. This guard is the
 // final protection against Public Posting Channel media being copied to
@@ -669,7 +680,7 @@ async function renderChannelPicker(ctx) {
   const rows = active.map(c => {
     const key = c.id || c.channelId;
     const checked = state.selected.has(key) ? '✅' : '⬜';
-    return [Markup.button.callback(`${checked} ${String(c.name || c.channelId).slice(0, 35)}`, 'pch_toggle:' + key)];
+    return [Markup.button.callback(`${checked} ${safeTruncate(c.name || c.channelId, 35)}`, 'pch_toggle:' + key)];
   });
   if (!rows.length && POST_CHANNEL) {
     const checked = state.selected.has(POST_CHANNEL) ? '✅' : '⬜';
@@ -1810,7 +1821,7 @@ async function renderBulkTopicsPanel(ctx) {
 
   const rows = pageTopics.map(t => {
     const checked = bulkSelect.ids.has(t.id) ? '✅' : '⬜';
-    const title = String(t.title || 'নামবিহীন').slice(0, 30);
+    const title = safeTruncate(t.title || 'নামবিহীন', 30);
     const ads = Number(t.adsRequired || 0) || 0;
     return [Markup.button.callback(`${checked} ${title} (${ads} ads)`, `blk:${t.id}`)];
   });
@@ -1913,7 +1924,7 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
   }
   if (action === 'channels') {
     const channels = await getChannels();
-    const rows = channels.map(ch => [Markup.button.callback(`${ch.active === false ? '🔴' : '🟢'} ${String(ch.name||ch.channelId).slice(0,35)}`, `ach_view:${ch.id || ch.channelId}`)]);
+    const rows = channels.map(ch => [Markup.button.callback(`${ch.active === false ? '🔴' : '🟢'} ${safeTruncate(ch.name||ch.channelId, 35)}`, `ach_view:${ch.id || ch.channelId}`)]);
     rows.push([Markup.button.callback('➕ Add Channel', 'ach_add')]);
     rows.push([Markup.button.callback('⬅️ Back', 'adm_home')]);
     return ctx.editMessageText('📢 CHANNEL MANAGER\n\nএকটি Channel নির্বাচন করুন:', Markup.inlineKeyboard(rows));
@@ -1938,7 +1949,7 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
     // looks up by), not the filtered/active-only list — otherwise once any
     // channel is inactive, every button after it points at the wrong channel.
     const rows = channels
-      .map((ch, i) => (ch.active === false ? null : [Markup.button.callback(`📢 ${String(ch.name||ch.channelId).slice(0,35)}`, `repost_channel:${i}`)]))
+      .map((ch, i) => (ch.active === false ? null : [Markup.button.callback(`📢 ${safeTruncate(ch.name||ch.channelId, 35)}`, `repost_channel:${i}`)]))
       .filter(Boolean);
     if (!rows.length && POST_CHANNEL) rows.push([Markup.button.callback('📢 Posting Channel', `repost_channel:default`)]);
     rows.push([Markup.button.callback('📥 Forward করে যোগ করুন', 'adm_repost_forward')]);
@@ -2068,7 +2079,7 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
   if (action === 'buttons') {
     const bs=await getPostButtons();
     const rows=bs.map((b,i)=>[
-      Markup.button.callback(`${i+1}. ${String(b.name).slice(0,20)}`,'ab_edit:'+i),
+      Markup.button.callback(`${i+1}. ${safeTruncate(b.name, 20)}`,'ab_edit:'+i),
       Markup.button.callback(i===0?'　':'⬆️','ab_up:'+i),
       Markup.button.callback(i===bs.length-1?'　':'⬇️','ab_down:'+i),
       Markup.button.callback('🗑️','ab_del:'+i)
@@ -2316,7 +2327,7 @@ bot.action(/^ab_del:(\d+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCb
 async function renderButtonManager(ctx) {
   const bs = await getPostButtons();
   const rows = bs.map((b, i) => [
-    Markup.button.callback(`${i + 1}. ${String(b.name).slice(0, 20)}`, 'ab_edit:' + i),
+    Markup.button.callback(`${i + 1}. ${safeTruncate(b.name, 20)}`, 'ab_edit:' + i),
     Markup.button.callback(i === 0 ? '　' : '⬆️', 'ab_up:' + i),
     Markup.button.callback(i === bs.length - 1 ? '　' : '⬇️', 'ab_down:' + i),
     Markup.button.callback('🗑️', 'ab_del:' + i)
@@ -3088,7 +3099,7 @@ bot.on('text', async (ctx) => {
         const isBlocked = user.blocked === true;
         message += `${index + 1}. ${displayName}${isBlocked ? ' 🚫' : ''}\n   👤 ${username}\n   🆔 <code>${escapeHtml(user.userId)}</code> ${status}\n\n`;
         blockRows.push([Markup.button.callback(
-          `${isBlocked ? '✅ Unblock' : '🚫 Block'} ${(fullName || user.userId)}`.slice(0, 40),
+          safeTruncate(`${isBlocked ? '✅ Unblock' : '🚫 Block'} ${(fullName || user.userId)}`, 40),
           `ublk:${user.userId}`
         )]);
       });
@@ -3106,7 +3117,7 @@ bot.on('text', async (ctx) => {
       const results = await searchTopics(text);
       if (!results.length) return ctx.reply('📭 এই নামে/ID-তে কোনো Topic পাওয়া যায়নি।');
       const rows = results.map(t => {
-        const label = `📌 ${String(t.title || 'নামবিহীন').slice(0, 40)} (${Number(t.videoCount || (Array.isArray(t.videos) ? t.videos.length : 0)) || 0} 📹)`;
+        const label = `📌 ${safeTruncate(t.title || 'নামবিহীন', 40)} (${Number(t.videoCount || (Array.isArray(t.videos) ? t.videos.length : 0)) || 0} 📹)`;
         return [Markup.button.callback(label, 'aview:' + t.id)];
       });
       return ctx.reply(`🔍 ফলাফল (${results.length}টি):`, Markup.inlineKeyboard(rows));
