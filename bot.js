@@ -180,11 +180,20 @@ let topicsRefreshPromise = null;
 const SINGLE_TOPIC_CACHE_TTL = 60 * 1000;
 let singleTopicCache = new Map();
 let singleTopicRefresh = new Map();
+// Caches Telegram file-URL lookups (fileId -> CDN url), bounded so a
+// long-running server doesn't accumulate one entry per file forever.
+const FILE_LINK_CACHE_MAX = 800;
 let fileLinkCache = new Map();
+function capFileLinkCache() {
+  if (fileLinkCache.size > FILE_LINK_CACHE_MAX) {
+    fileLinkCache.delete(fileLinkCache.keys().next().value);
+  }
+}
 // In-memory byte cache for thumbnails: once an image is fetched from Telegram
 // once, we keep the actual bytes here so every later request (any user) is
 // served instantly from our own server instead of round-tripping to
-// Telegram's CDN again. Capped so memory usage stays bounded.
+// Telegram's CDN again. Capped (true LRU — a cache hit refreshes the entry's
+// position) so memory usage stays bounded while keeping hot thumbnails in.
 const THUMB_BYTES_CACHE_MAX = 400;
 let thumbBytesCache = new Map(); // fileId -> { buf, type }
 function cacheThumbBytes(fileId, buf, type) {
@@ -193,6 +202,15 @@ function cacheThumbBytes(fileId, buf, type) {
   if (thumbBytesCache.size > THUMB_BYTES_CACHE_MAX) {
     thumbBytesCache.delete(thumbBytesCache.keys().next().value);
   }
+}
+function getThumbBytesCached(fileId) {
+  const hit = thumbBytesCache.get(fileId);
+  if (hit) {
+    // Refresh position so frequently-viewed thumbnails are the last to be evicted.
+    thumbBytesCache.delete(fileId);
+    thumbBytesCache.set(fileId, hit);
+  }
+  return hit;
 }
 // Telegram sends several resolutions for every photo. We used to keep the
 // largest one as the "thumbnail", which meant every card in the mini app grid
@@ -978,7 +996,7 @@ bot.start(async (ctx) => {
         pendingUnlockTopicId: admin.firestore.FieldValue.delete(),
         pendingUnlockAt: admin.firestore.FieldValue.delete()
       });
-      return ctx.reply('⏳ এই unlock request-এর সময় শেষ হয়ে গেছে। Mini App থেকে আবার unlock করুন।');
+      return ctx.reply('⏳ এই unlock request-এর সময় শেষ হয়ে গেছে। Mini App থেকে আবার unlock করুন।');
     }
     if (topicId) {
       try {
@@ -1421,19 +1439,29 @@ async function recordTopicPost(topicId, channelId, messageId, type, caption = ''
       createdAt: Date.now()
     });
     invalidateTopicsCache();
-    cleanupChannelPosts().catch(e => console.error('❌ channelPosts cleanup error:', e.message));
+    cleanupChannelPosts(channelId).catch(e => console.error('❌ channelPosts cleanup error:', e.message));
   } catch (e) {
     console.error('❌ Could not record channel post:', e.message);
   }
 }
 
-const CHANNEL_POSTS_CAP = 300;
-async function cleanupChannelPosts() {
-  const countSnap = await db.collection('channelPosts').count().get();
+// This is a safety net against runaway/unbounded growth, not a real limit —
+// at 2000 kept per channel it should never trigger in normal day-to-day use,
+// so no repost history is lost. Cleanup is scoped per-channel now (not
+// globally), so a channel you post to often can never crowd out or cause the
+// cleanup of another channel's saved posts.
+const CHANNEL_POSTS_CAP_PER_CHANNEL = 2000;
+async function cleanupChannelPosts(channelId) {
+  const wanted = String(channelId);
+  const countSnap = await db.collection('channelPosts').where('channelId', '==', wanted).count().get();
   const total = countSnap.data().count || 0;
-  if (total <= CHANNEL_POSTS_CAP) return;
-  const excess = total - CHANNEL_POSTS_CAP;
-  const oldSnap = await db.collection('channelPosts').orderBy('postedAt', 'asc').limit(excess).get();
+  if (total <= CHANNEL_POSTS_CAP_PER_CHANNEL) return;
+  const excess = total - CHANNEL_POSTS_CAP_PER_CHANNEL;
+  const oldSnap = await db.collection('channelPosts')
+    .where('channelId', '==', wanted)
+    .orderBy('postedAt', 'asc')
+    .limit(excess)
+    .get();
   if (oldSnap.empty) return;
   const batch = db.batch();
   oldSnap.docs.forEach(d => batch.delete(d.ref));
@@ -1445,11 +1473,17 @@ async function getRepostPostsForChannel(channelId) {
   const map = new Map();
 
   // New global records: caption + exact message metadata are available.
+  // Filtered by channelId *in the query itself* — not fetched-then-filtered —
+  // so a channel you post to less often never gets crowded out of the most
+  // recent 300 posts by a channel you post to constantly.
   try {
-    const snap = await db.collection('channelPosts').orderBy('postedAt', 'desc').limit(300).get();
+    const snap = await db.collection('channelPosts')
+      .where('channelId', '==', wanted)
+      .orderBy('postedAt', 'desc')
+      .limit(300)
+      .get();
     snap.docs.forEach(doc => {
       const d = doc.data() || {};
-      if (String(d.channelId) !== wanted) return;
       const key = `${d.channelId}:${d.messageId}`;
       if (!map.has(key)) map.set(key, { id: doc.id, ...d, legacy: false });
     });
@@ -1457,28 +1491,35 @@ async function getRepostPostsForChannel(channelId) {
     console.warn('⚠️ channelPosts index unavailable:', e.message);
   }
 
-  // Legacy topic-level records: useful for posts saved by older versions.
-  // Old records may not have the original caption, so title is used as display fallback.
-  const topics = await getTopicsCached();
-  topics.forEach(t => {
-    const records = Array.isArray(t.postRecords) ? t.postRecords : [];
-    records.forEach(r => {
-      if (String(r.channelId) !== wanted || !r.messageId) return;
-      const key = `${r.channelId}:${r.messageId}`;
-      if (!map.has(key)) {
-        map.set(key, {
-          channelId: String(r.channelId),
-          messageId: Number(r.messageId),
-          type: r.type || 'video',
-          caption: String(r.caption || ''),
-          title: String(r.title || t.title || ''),
-          topicId: t.id,
-          postedAt: Number(r.postedAt) || 0,
-          legacy: true
-        });
-      }
+  // Legacy topic-level records: only needed for posts saved by older versions
+  // of the bot, before the channelPosts index existed. Once a channel has any
+  // posts in the new index (the normal case for everyday use), we skip this
+  // entirely — looping every topic on every single button click is the part
+  // that used to get slower and slower as your content library grew. This
+  // keeps clicks fast no matter how large your topic library gets, while
+  // still supporting old data for channels that predate the new index.
+  if (map.size === 0) {
+    const topics = await getTopicsCached();
+    topics.forEach(t => {
+      const records = Array.isArray(t.postRecords) ? t.postRecords : [];
+      records.forEach(r => {
+        if (String(r.channelId) !== wanted || !r.messageId) return;
+        const key = `${r.channelId}:${r.messageId}`;
+        if (!map.has(key)) {
+          map.set(key, {
+            channelId: String(r.channelId),
+            messageId: Number(r.messageId),
+            type: r.type || 'video',
+            caption: String(r.caption || ''),
+            title: String(r.title || t.title || ''),
+            topicId: t.id,
+            postedAt: Number(r.postedAt) || 0,
+            legacy: true
+          });
+        }
+      });
     });
-  });
+  }
 
   return Array.from(map.values())
     .sort((a,b) => (Number(b.postedAt)||0) - (Number(a.postedAt)||0));
@@ -1816,8 +1857,8 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
       [Markup.button.callback('⬅️ Back', 'adm_home')]
     ]));
   }
-  if (action === 'add_video') { startAddVideoWorkflow(ctx.from.id); return ctx.reply('📹 ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)।\n\n⚠️ এটি Channel Post নয়। আগে ভিডিও, তারপর Title → Thumbnail → Ads Count দিন।'); }
-  if (action === 'add_topic') { startAddTopicWorkflow(ctx.from.id); return ctx.reply('📹 প্রথম ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)।\n\n⚠️ এটি Channel Post নয়। ভিডিওগুলো শেষে /done দিন, তারপর Title → Thumbnail → Ads Count।'); }
+  if (action === 'add_video') { startAddVideoWorkflow(ctx.from.id); return ctx.reply('📹 ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)।\n\n⚠️ এটি Channel Post নয়। আগে ভিডিও, তারপর Title → Thumbnail → Ads Count দিন।'); }
+  if (action === 'add_topic') { startAddTopicWorkflow(ctx.from.id); return ctx.reply('📹 প্রথম ভিডিওটি পাঠান (ফাইল বা ভিডিও হিসেবে)।\n\n⚠️ এটি Channel Post নয়। ভিডিওগুলো শেষে /done দিন, তারপর Title → Thumbnail → Ads Count।'); }
   if (action === 'append_video') {
     clearAdminWorkflow(ctx.from.id);
     appendVideoData[ctx.from.id] = { step: 'topicId' };
@@ -1898,7 +1939,12 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
     clearAdminWorkflow(ctx.from.id);
     repostData[ctx.from.id] = { step: 'channel' };
     const channels = await getChannels();
-    const rows = channels.filter(c=>c.active!==false).map((ch, i) => [Markup.button.callback(`📢 ${String(ch.name||ch.channelId).slice(0,35)}`, `repost_channel:${i}`)]);
+    // Index must match the FULL channels array (that's what the handler below
+    // looks up by), not the filtered/active-only list — otherwise once any
+    // channel is inactive, every button after it points at the wrong channel.
+    const rows = channels
+      .map((ch, i) => (ch.active === false ? null : [Markup.button.callback(`📢 ${String(ch.name||ch.channelId).slice(0,35)}`, `repost_channel:${i}`)]))
+      .filter(Boolean);
     if (!rows.length && POST_CHANNEL) rows.push([Markup.button.callback('📢 Posting Channel', `repost_channel:default`)]);
     rows.push([Markup.button.callback('📥 Forward করে যোগ করুন', 'adm_repost_forward')]);
     rows.push([Markup.button.callback('⬅️ Back', 'adm_create_post')]);
@@ -2038,8 +2084,8 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
   }
   } catch (error) {
     console.error('❌ Admin button error [' + action + ']:', error);
-    try { await ctx.answerCbQuery('❌ কাজটি করা যায়নি'); } catch (e) {}
-    return ctx.reply('❌ Admin action-এ সমস্যা হয়েছে।\n\n' + (error.message || 'Unknown error'));
+    try { await ctx.answerCbQuery('❌ কাজটি করা যায়নি'); } catch (e) {}
+    return ctx.reply('❌ Admin action-এ সমস্যা হয়েছে।\n\n' + (error.message || 'Unknown error'));
   }
 });
 
@@ -2049,7 +2095,7 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
 bot.action(/^aview:(.+)$/, async ctx=>{
   if(!adminOnly(ctx)) return ctx.answerCbQuery('❌ অনুমতি নেই');
   const id=ctx.match[1]; const doc=await db.collection('topics').doc(id).get();
-  if(!doc.exists) return ctx.answerCbQuery('❌ Video পাওয়া যায়নি');
+  if(!doc.exists) return ctx.answerCbQuery('❌ Video পাওয়া যায়নি');
   const t=doc.data(); await ctx.answerCbQuery();
   return ctx.editMessageText(`🎬 VIDEO DETAILS\n\n📌 ${t.title||'নামবিহীন'}\n🆔 ${id}\n📹 Videos: ${t.videoCount||0}\n🎯 Ads: ${t.adsRequired||1}\n👁️ Views: ${Number(t.unlockCount||0)}`,Markup.inlineKeyboard([
     [Markup.button.callback('✏️ Rename','av_rename:'+id),Markup.button.callback('🖼️ Thumbnail','av_thumb:'+id)],
@@ -2103,7 +2149,7 @@ bot.action(/^av_delete_confirm:(.+)$/, async ctx=>{
   return ctx.editMessageText('✅ Video/Topic delete হয়েছে।', Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'adm_list')]]));
 });
 bot.action(/^apost_topic:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); const topicId=ctx.match[1]; channelPickData[ctx.from.id]={mode:'topic_post',topicId,selected:new Set()}; await ctx.answerCbQuery(); return renderChannelPicker(ctx); });
-bot.action(/^apostch_topic:([^:]+):(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); delete adminVideoData[ctx.from.id]; let ch=ctx.match[1]; const doc=await db.collection('channels').doc(ch).get(); if(doc.exists)ch=doc.data().channelId; const topicId=ctx.match[2]; const td=await db.collection('topics').doc(topicId).get(); if(!td.exists)return ctx.answerCbQuery('❌ Video নেই'); const t=td.data(); const fileId=(t.videos&&t.videos[0])||t.videoId||''; if(!fileId)return ctx.answerCbQuery('❌ Video file পাওয়া যায়নি'); const kb=await buildConfiguredPostKeyboard(topicId); await ctx.answerCbQuery('Posting...'); try{const sent=await bot.telegram.sendVideo(ch,fileId,{caption:t.title||'',reply_markup:kb.reply_markup}); await recordTopicPost(topicId,ch,sent.message_id,'video',t.title||'',t.title||''); return ctx.reply(`✅ Post হয়েছে\n📢 ${ch}\n🆔 Message ID: ${sent.message_id}`, { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup });}catch(e){return ctx.reply('❌ Channel-এ post করা যায়নি: '+e.message);} });
+bot.action(/^apostch_topic:([^:]+):(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); delete adminVideoData[ctx.from.id]; let ch=ctx.match[1]; const doc=await db.collection('channels').doc(ch).get(); if(doc.exists)ch=doc.data().channelId; const topicId=ctx.match[2]; const td=await db.collection('topics').doc(topicId).get(); if(!td.exists)return ctx.answerCbQuery('❌ Video নেই'); const t=td.data(); const fileId=(t.videos&&t.videos[0])||t.videoId||''; if(!fileId)return ctx.answerCbQuery('❌ Video file পাওয়া যায়নি'); const kb=await buildConfiguredPostKeyboard(topicId); await ctx.answerCbQuery('Posting...'); try{const sent=await bot.telegram.sendVideo(ch,fileId,{caption:t.title||'',reply_markup:kb.reply_markup}); await recordTopicPost(topicId,ch,sent.message_id,'video',t.title||'',t.title||''); return ctx.reply(`✅ Post হয়েছে\n📢 ${ch}\n🆔 Message ID: ${sent.message_id}`, { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup });}catch(e){return ctx.reply('❌ Channel-এ post করা যায়নি: '+e.message);} });
 
 // =============================================
 // 📢 REPOST: Channel -> saved captions -> instant copy
@@ -2116,14 +2162,14 @@ bot.action(/^repost_channel:(\d+|default)$/, async ctx => {
     ? { channelId: POST_CHANNEL, name: 'Posting Channel' }
     : channels[Number(key)];
 
-  if (!channel || !channel.channelId) return ctx.answerCbQuery('❌ Channel পাওয়া যায়নি');
+  if (!channel || !channel.channelId) return ctx.answerCbQuery('❌ Channel পাওয়া যায়নি');
   const channelId = String(channel.channelId);
   await ctx.answerCbQuery();
 
   const posts = await getRepostPostsForChannel(channelId);
   if (!posts.length) {
     return ctx.editMessageText(
-      `📢 ${channel.name || channelId}\n\n📭 এই Channel-এর কোনো saved Post পাওয়া যায়নি।\n\nনতুন Post করলে পরের বার Repost list-এ থাকবে।`,
+      `📢 ${channel.name || channelId}\n\n📭 এই Channel-এর কোনো saved Post পাওয়া যায়নি।\n\nনতুন Post করলে পরের বার Repost list-এ থাকবে।`,
       Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'adm_repost')]])
     );
   }
@@ -2222,7 +2268,7 @@ bot.action(/^repost_confirm:(\d+)$/, async ctx => {
 
 // Channel manager actions
 bot.action('ach_add', async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); await ctx.answerCbQuery(); postData[ctx.from.id]={step:'channel_name'}; return ctx.reply('📢 নতুন Channel-এর নাম লিখুন:'); });
-bot.action(/^ach_view:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); const id=ctx.match[1]; await ctx.answerCbQuery(); const channels=await getChannels(); const c=channels.find(x=>x.id===id || x.channelId===id); if(!c)return ctx.reply('❌ Channel পাওয়া যায়নি।'); return ctx.reply(`📢 ${c.name||'Posting Channel'}\n🆔 ${c.channelId}\n🔗 ${c.link||'(none)'}\n🟢 Active: ${c.active!==false}` ,Markup.inlineKeyboard([[Markup.button.callback('📤 Post Here','apostch:'+id),Markup.button.callback(c.active===false?'🟢 Enable':'🔴 Disable','ach_toggle:'+id)],[Markup.button.callback('✏️ Rename / Edit','ach_edit:'+id),Markup.button.callback('🗑️ Delete','ach_del:'+id)],[Markup.button.callback('⬅️ Back','adm_channels')]])); });
+bot.action(/^ach_view:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); const id=ctx.match[1]; await ctx.answerCbQuery(); const channels=await getChannels(); const c=channels.find(x=>x.id===id || x.channelId===id); if(!c)return ctx.reply('❌ Channel পাওয়া যায়নি।'); return ctx.reply(`📢 ${c.name||'Posting Channel'}\n🆔 ${c.channelId}\n🔗 ${c.link||'(none)'}\n🟢 Active: ${c.active!==false}` ,Markup.inlineKeyboard([[Markup.button.callback('📤 Post Here','apostch:'+id),Markup.button.callback(c.active===false?'🟢 Enable':'🔴 Disable','ach_toggle:'+id)],[Markup.button.callback('✏️ Rename / Edit','ach_edit:'+id),Markup.button.callback('🗑️ Delete','ach_del:'+id)],[Markup.button.callback('⬅️ Back','adm_channels')]])); });
 bot.action(/^ach_edit:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); const id=ctx.match[1]; const channels=await getChannels(); const c=channels.find(x=>x.id===id || x.channelId===id); if(!c)return ctx.answerCbQuery('❌ নেই'); await ctx.answerCbQuery(); const docId=id.startsWith('env_') ? id : id; if(id.startsWith('env_')) { await db.collection('channels').doc(docId).set({name:c.name||'Posting Channel',channelId:c.channelId,link:c.link||'',active:c.active!==false,createdAt:Date.now(),updatedAt:Date.now(),legacyOverride:true},{merge:true}); } postData[ctx.from.id]={step:'channel_edit_name',channelDocId:docId,channel:c}; return ctx.reply(`✏️ Current Channel Name: ${c.name||''}\n\nনতুন Channel Name পাঠান:`); });
 
 bot.action(/^ach_toggle:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); const id=ctx.match[1]; const ref=db.collection('channels').doc(id); const d=await ref.get(); if(!d.exists)return ctx.answerCbQuery('❌ নেই'); await ref.update({active:d.data().active===false,updatedAt:Date.now()}); await ctx.answerCbQuery('Updated'); return ctx.reply('✅ Channel status updated.'); });
@@ -2271,7 +2317,7 @@ bot.action(/^apostch:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCb
 // Saved post buttons manager
 bot.action('ab_add', async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); await ctx.answerCbQuery(); postData[ctx.from.id]={step:'button_name'}; return ctx.reply('🔘 Button-এর নাম লিখুন:'); });
 bot.action(/^ab_edit:(\d+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); const i=Number(ctx.match[1]); const bs=await getPostButtons(); if(!bs[i])return ctx.answerCbQuery('❌ নেই'); await ctx.answerCbQuery(); postData[ctx.from.id]={step:'button_edit_name',buttonIndex:i}; return ctx.reply(`✏️ বর্তমান নাম: ${bs[i].name}\n\nনতুন Button Name লিখুন (না বদলালে একই নাম আবার লিখুন):`); });
-bot.action(/^ab_del:(\d+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); const i=Number(ctx.match[1]); const bs=await getPostButtons(); if(!bs[i])return ctx.answerCbQuery('❌ নেই'); bs.splice(i,1); if(!bs.length)bs.push(...DEFAULT_POST_BUTTONS); await savePostButtons(bs); await ctx.answerCbQuery('Deleted'); return ctx.reply('✅ Button delete হয়েছে।'); });
+bot.action(/^ab_del:(\d+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); const i=Number(ctx.match[1]); const bs=await getPostButtons(); if(!bs[i])return ctx.answerCbQuery('❌ নেই'); bs.splice(i,1); if(!bs.length)bs.push(...DEFAULT_POST_BUTTONS); await savePostButtons(bs); await ctx.answerCbQuery('Deleted'); return ctx.reply('✅ Button delete হয়েছে।'); });
 async function renderButtonManager(ctx) {
   const bs = await getPostButtons();
   const rows = bs.map((b, i) => [
@@ -2335,7 +2381,7 @@ bot.command('views', async (ctx) => {
       `🔥 Top 5 Today\n`;
 
     if (todayRanking.length === 0) {
-      message += `আজ এখনো কোনো ভিডিও Unlock হয়নি।`;
+      message += `আজ এখনো কোনো ভিডিও Unlock হয়নি।`;
     } else {
       todayRanking.slice(0, 5).forEach((item, index) => {
         const safeTitle = item.title.slice(0, 70) || 'নামবিহীন';
@@ -2798,7 +2844,7 @@ bot.on('text', async (ctx) => {
     if (state.step === 'button_name') { state.name=text.slice(0,60); state.step='button_url'; return ctx.reply('🔗 Button Link দিন।\n\nVideo button হলে: {VIDEO_LINK}\nHelp Admin হলে: {HELP_LINK}\nঅন্য link হলে সরাসরি https://... দিন।'); }
     if (state.step === 'button_url') { if(text!=='{VIDEO_LINK}'&&text!=='{HELP_LINK}'&&!/^https?:\/\//i.test(text)) return ctx.reply('❌ সঠিক https:// link বা {VIDEO_LINK}/{HELP_LINK} দিন।'); const bs=await getPostButtons(); bs.push({name:state.name,url:text}); await savePostButtons(bs); delete postData[userId]; return ctx.reply('✅ Button saved. নতুন post-এ automatic থাকবে।'); }
     if (state.step === 'button_edit_name') { state.name=text.slice(0,60); state.step='button_edit_url'; return ctx.reply('🔗 নতুন Button Link দিন।\n{VIDEO_LINK}, {HELP_LINK} অথবা https://...'); }
-    if (state.step === 'button_edit_url') { if(text!=='{VIDEO_LINK}'&&text!=='{HELP_LINK}'&&!/^https?:\/\//i.test(text)) return ctx.reply('❌ সঠিক link দিন।'); const bs=await getPostButtons(); if(!bs[state.buttonIndex]) return ctx.reply('❌ Button পাওয়া যায়নি।'); bs[state.buttonIndex]={name:state.name,url:text}; await savePostButtons(bs); delete postData[userId]; return ctx.reply('✅ Button updated.'); }
+    if (state.step === 'button_edit_url') { if(text!=='{VIDEO_LINK}'&&text!=='{HELP_LINK}'&&!/^https?:\/\//i.test(text)) return ctx.reply('❌ সঠিক link দিন।'); const bs=await getPostButtons(); if(!bs[state.buttonIndex]) return ctx.reply('❌ Button পাওয়া যায়নি।'); bs[state.buttonIndex]={name:state.name,url:text}; await savePostButtons(bs); delete postData[userId]; return ctx.reply('✅ Button updated.'); }
 
     if (state.step === 'setlink') {
       if (!/^https?:\/\//i.test(text)) {
@@ -2901,11 +2947,11 @@ bot.on('text', async (ctx) => {
     }
     if (state.step === 'delete_id') {
       const td = await db.collection('topics').doc(topicId).get();
-      if (!td.exists) return ctx.reply('❌ এই Video/Topic ID পাওয়া যায়নি। আবার ID পাঠান।');
+      if (!td.exists) return ctx.reply('❌ এই Video/Topic ID পাওয়া যায়নি। আবার ID পাঠান।');
       await db.collection('topics').doc(topicId).delete();
       delete adminVideoData[userId];
       invalidateTopicsCache();
-      return ctx.reply(`✅ Video/Topic delete হয়েছে।\n🆔 ${topicId}`);
+      return ctx.reply(`✅ Video/Topic delete হয়েছে।\n🆔 ${topicId}`);
     }
   }
 
@@ -3377,7 +3423,7 @@ app.get('/api/thumbnail/:fileId', async (req, res) => {
     // Already have the actual image bytes cached in memory — serve instantly,
     // no round trip to Telegram at all. This is the common case after the
     // first user has ever opened a given thumbnail.
-    const cached = thumbBytesCache.get(fileId);
+    const cached = getThumbBytesCached(fileId);
     if (cached) {
       res.set('Content-Type', cached.type);
       res.set('Cache-Control', 'public, max-age=604800, immutable');
@@ -3390,6 +3436,7 @@ app.get('/api/thumbnail/:fileId', async (req, res) => {
     if (!entry || entry.expiresAt <= now) {
       entry = { promise: bot.telegram.getFileLink(fileId), expiresAt: now + FILE_LINK_CACHE_TTL };
       fileLinkCache.set(fileId, entry);
+      capFileLinkCache();
       entry.url = await entry.promise;
       entry.promise = null;
     } else if (entry.promise) {
