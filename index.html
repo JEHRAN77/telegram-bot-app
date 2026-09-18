@@ -531,6 +531,13 @@ function loadHome(){
     });
 }
 
+// Keep the Mini App UI in sync with the server-side 30-minute access window.
+// The server is the source of truth; this only refreshes the display so an
+// already-open app relocks a topic automatically when its 30-minute window ends.
+setInterval(function(){
+  if(!isWatching && userId()) loadUnlocked().catch(function(){});
+}, 60 * 1000);
+
 // AdsGram is disabled for now. In testing, alternating in an AdsGram attempt
 // before/after Monetag for every other ad caused the exact bug reported by
 // users: watching what should be ONE ad, but having to close TWO ad

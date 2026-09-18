@@ -169,43 +169,48 @@
         modal.classList.add('show');
     }
 
-    function watchAd(topic) {
-        const adsRequired = topic.adsRequired || 0;
-        let adsWatched = 0;
-        
-        const modal = document.getElementById('modal');
+    async function watchAd(topic) {
+        if (window.__watchingAd) return;
+        window.__watchingAd = true;
         const actionBtn = document.getElementById('modal-action-btn');
-        const description = document.getElementById('modal-description');
-        
+        const adsRequired = Math.max(1, Number(topic.adsRequired) || 1);
         actionBtn.disabled = true;
-        actionBtn.textContent = `⏳ অ্যাড দেখছেন... (${adsWatched}/${adsRequired})`;
-        
-        let interval = setInterval(() => {
-            adsWatched++;
-            actionBtn.textContent = `⏳ অ্যাড দেখছেন... (${adsWatched}/${adsRequired})`;
-            
-            if (adsWatched >= adsRequired) {
-                clearInterval(interval);
-                actionBtn.textContent = '✅ আনলক করা হয়েছে!';
-                actionBtn.style.background = '#22c55e';
-                actionBtn.style.color = '#fff';
-                actionBtn.disabled = true;
-                description.innerHTML = `
-                    🎉 টপিকটি আনলক হয়েছে!<br>
-                    📹 সব ভিডিও এখন দেখা যাবে
-                `;
-                
-                // বটকে নোটিফাই করুন যে ইউজার টপিক আনলক করেছে
-                fetch(`${API_BASE}/unlock-topic`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        userId: getUserId(),
-                        topicId: topic.id
-                    })
-                }).catch(err => console.error('Unlock error:', err));
-            }
-        }, 2000);
+        actionBtn.textContent = '⏳ Ad প্রস্তুত হচ্ছে...';
+        try {
+            const startRes = await fetch(`${API_BASE}/ad-start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId: getUserId(), topicId: topic.id })
+            });
+            const startData = await startRes.json();
+            if (!startData.success) throw new Error(startData.error || 'Ad শুরু করা যায়নি');
+
+            const adFn = window.show_11737734;
+            if (typeof adFn !== 'function') throw new Error('Ad এখনো প্রস্তুত নয়। একটু পর আবার চেষ্টা করুন।');
+            const startedAt = Date.now();
+            await Promise.resolve(adFn());
+            const wait = Math.max(0, 10000 - (Date.now() - startedAt));
+            if (wait) await new Promise(resolve => setTimeout(resolve, wait));
+
+            const completeRes = await fetch(`${API_BASE}/ad-complete`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId: getUserId(), topicId: topic.id, token: startData.token })
+            });
+            const data = await completeRes.json();
+            if (!completeRes.ok || !data.success) throw new Error(data.error || 'Ad count হয়নি');
+
+            actionBtn.textContent = data.unlocked ? '✅ আনলক হয়েছে' : `(${data.count}/${data.required}) Ads`;
+            actionBtn.disabled = !!data.unlocked;
+            if (data.unlocked) await loadUserStatus();
+        } catch (e) {
+            console.error('Ad/unlock error:', e);
+            actionBtn.disabled = false;
+            actionBtn.textContent = `🎬 ${adsRequired}টি অ্যাড দেখে আনলক করুন`;
+            if (Telegram && Telegram.showAlert) Telegram.showAlert(e.message || 'Ad সম্পূর্ণ হয়নি। আবার চেষ্টা করুন।');
+        } finally {
+            window.__watchingAd = false;
+        }
     }
 
     document.querySelector('.close-btn').addEventListener('click', () => {
