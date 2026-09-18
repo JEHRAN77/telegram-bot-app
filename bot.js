@@ -1537,6 +1537,16 @@ bot.action(/^sched_repeat:(none|daily|weekly)$/, async (ctx) => {
       fileId: state.fileId,
       caption: state.caption || '',
       topicId: state.topicId,
+      // 🐛 FIX: the topic's title used to be shown wherever this schedule
+      // shows up later (the Scheduled Posts list, the "sent" notification),
+      // making it easy to tell at a glance which content a schedule was
+      // for. It was being tracked in `state` the whole time (set back when
+      // the topic ID was first entered) but never actually saved onto the
+      // scheduledPosts doc itself — so every list/notification downstream
+      // could only ever show the raw Topic ID, which isn't readable. Saving
+      // it here (once, at schedule time) means it survives even if the
+      // topic is later renamed or deleted.
+      title: state.title || 'নামবিহীন ভিডিও',
       scheduledAt: parsed,
       recurrence, // null | 'daily' | 'weekly'
       status: 'pending',
@@ -1549,7 +1559,7 @@ bot.action(/^sched_repeat:(none|daily|weekly)$/, async (ctx) => {
       : recurrence === 'weekly' ? '\n🔁 প্রতি সপ্তাহে এই সময়ে repeat হবে (বাতিল না করা পর্যন্ত)।'
       : '';
     return ctx.reply(
-      `✅ Post Schedule হয়েছে!\n\n🆔 Schedule ID: <code>${docRef.id}</code>\n📅 সময়: ${formatDhakaDateTime(parsed)}${repeatLabel}\n\nনির্ধারিত সময়ে এটা নিজে থেকেই Channel-এ Post হয়ে যাবে।`,
+      `✅ Post Schedule হয়েছে!\n\n📌 Title: ${state.title || 'নামবিহীন ভিডিও'}\n🆔 Schedule ID: <code>${docRef.id}</code>\n📅 সময়: ${formatDhakaDateTime(parsed)}${repeatLabel}\n\nনির্ধারিত সময়ে এটা নিজে থেকেই Channel-এ Post হয়ে যাবে।`,
       { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup }
     );
   } catch (error) {
@@ -2022,12 +2032,30 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
       if (snap.empty) {
         return ctx.editMessageText('📭 কোনো Scheduled Post নেই।', Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'adm_home')]]));
       }
+      // 🐛 FIX: older schedules saved before `title` was stored on the doc
+      // (see post_schedule save above) won't have it — look those specific
+      // few up from the topics collection so the list is still readable
+      // instead of falling back to a bare, meaningless Topic ID.
+      const missingTitleIds = [...new Set(
+        snap.docs.map(d => d.data()).filter(sp => !sp.title && sp.topicId).map(sp => sp.topicId)
+      )];
+      const fallbackTitles = {};
+      if (missingTitleIds.length) {
+        await Promise.all(missingTitleIds.map(async id => {
+          try {
+            const t = await db.collection('topics').doc(id).get();
+            fallbackTitles[id] = t.exists ? (t.data().title || 'নামবিহীন ভিডিও') : '❓ Topic পাওয়া যায়নি';
+          } catch (e) { fallbackTitles[id] = '❓ Topic পাওয়া যায়নি'; }
+        }));
+      }
+
       const rows = [];
       let text = '🕒 SCHEDULED POSTS\n\n';
       snap.docs.forEach((d, i) => {
         const sp = d.data();
         const repeatTag = sp.recurrence === 'daily' ? ' 🔁Daily' : sp.recurrence === 'weekly' ? ' 🔁Weekly' : '';
-        text += `${i + 1}. 🆔 Topic: ${sp.topicId} | 📅 ${formatDhakaDateTime(sp.scheduledAt)}${repeatTag} | 📢 ${(sp.channels || []).length}টি Channel\n`;
+        const title = sp.title || fallbackTitles[sp.topicId] || 'নামবিহীন ভিডিও';
+        text += `${i + 1}. 📌 ${title} (🆔 ${sp.topicId}) | 📅 ${formatDhakaDateTime(sp.scheduledAt)}${repeatTag} | 📢 ${(sp.channels || []).length}টি Channel\n`;
         rows.push([Markup.button.callback(`❌ Cancel #${i + 1}`, `schedcancel:${d.id}`)]);
       });
       rows.push([Markup.button.callback('⬅️ Back', 'adm_home')]);
@@ -2897,6 +2925,7 @@ bot.on('text', async (ctx) => {
       return ctx.reply(
         `👀 Post Preview\n\n` +
         `🎬 Type: ${state.type === 'video' ? 'Video' : 'Photo'}\n` +
+        `📌 Title: ${state.title || 'নামবিহীন ভিডিও'}\n` +
         `🆔 Video/Topic ID: ${state.topicId}\n` +
         `📝 Caption: ${state.caption || '(কোনো caption নেই)'}\n\n` +
         `Buttons:\n▶️ ভিডিও দেখুন\nHelp Admin\n\n` +
@@ -3869,7 +3898,7 @@ async function firePostSchedule(docId) {
   if (ADMIN_ID) {
     await safeSendMessage(
       ADMIN_ID,
-      `🕒 Scheduled Post সম্পন্ন হয়েছে\n\n🆔 Video/Topic ID: ${sp.topicId}\n\n${lines.join('\n')}`,
+      `🕒 Scheduled Post সম্পন্ন হয়েছে\n\n📌 Title: ${sp.title || 'নামবিহীন ভিডিও'}\n🆔 Video/Topic ID: ${sp.topicId}\n\n${lines.join('\n')}`,
       { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup }
     ).catch(() => {});
   }

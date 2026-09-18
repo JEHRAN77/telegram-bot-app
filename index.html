@@ -521,12 +521,16 @@ function loadHome(){
     });
 }
 
-// AdsGram Block ID is set. Until this platform is actually approved by
-// AdsGram, ctrl.show() below will simply fail/reject (no real ads to serve
-// yet) — showNetworkAd()'s built-in fallback then quietly retries with
-// Monetag instead, so unlocking keeps working exactly as before. Once
-// AdsGram approves the platform, this same code starts alternating for real
-// with zero further changes needed.
+// AdsGram is disabled for now. In testing, alternating in an AdsGram attempt
+// before/after Monetag for every other ad caused the exact bug reported by
+// users: watching what should be ONE ad, but having to close TWO ad
+// overlays (and, worse, sometimes hanging forever on "Preparing Ad…" while
+// AdsGram silently waited for fill that never came) before the view was
+// actually counted. Flip this back to true only after AdsGram has
+// genuinely confirmed the platform is approved and serving real ads
+// end-to-end — until then, Monetag alone handles every ad, one click = one
+// ad = one count, exactly as it should.
+var ADSGRAM_ENABLED=false;
 var ADSGRAM_BLOCK_ID='48464';
 var adsgramController=null;
 function getAdsgramController(){
@@ -536,8 +540,8 @@ function getAdsgramController(){
   }
   return adsgramController;
 }
-// Alternates ad networks per ad watched: 1st = Monetag, 2nd = AdsGram, 3rd = Monetag...
 function pickAdNetwork(){
+  if(!ADSGRAM_ENABLED) return 'monetag';
   return (adCount%2===0)?'monetag':'adsgram';
 }
 function showNetworkAd(network){
@@ -549,6 +553,23 @@ function showNetworkAd(network){
   var adFn=window.show_11737734;
   if(typeof adFn!=='function') return Promise.reject(new Error('Monetag not ready'));
   return Promise.resolve(adFn());
+}
+
+// Mirrors the server's MIN_AD_DURATION_MS (see bot.js /api/ad-complete).
+// Keeping the exact same number here means a genuinely-watched ad NEVER
+// gets rejected by the server for looking "too fast" — the client simply
+// waits out the remainder before asking the server to record it, instead of
+// firing immediately, getting a timing rejection, and forcing the user to
+// watch a whole extra ad just to retry. This was the other real cause of
+// "had to watch/close twice for one ad to count."
+var AD_MIN_WATCH_MS=10000;
+// Hard ceiling so the button can never get stuck on "Preparing Ad…" forever
+// (e.g. an ad SDK whose promise never resolves or rejects). If nothing has
+// happened by this point, the attempt is abandoned and the user can retry.
+var AD_WATCH_TIMEOUT_MS=45000;
+var adWatchTimer=null;
+function clearAdWatchTimer(){
+  if(adWatchTimer){clearTimeout(adWatchTimer);adWatchTimer=null;}
 }
 
 function startAds(topic,button){
@@ -564,40 +585,72 @@ function startAds(topic,button){
     body:JSON.stringify({userId:userId(),topicId:topic.id})
   }).then(function(r){return r.json()}).then(function(startData){
     if(!startData||!startData.success){resetAd(startData&&startData.error||'Ad শুরু করা যায়নি');return}
-    currentAdToken=startData.token;
+    var myToken=startData.token;
+    var myTopicId=String(topic.id);
+    var myStartedAt=Date.now();
+    currentAdToken=myToken;
 
     var overlay=document.getElementById('ad-overlay');
     overlay.classList.add('show');
     document.getElementById('adTimer').textContent='•••';
 
+    clearAdWatchTimer();
+    adWatchTimer=setTimeout(function(){
+      if(myToken===currentAdToken){
+        resetAd('⚠️ Ad লোড হতে অনেক সময় লাগছে। আবার চেষ্টা করুন।');
+      }
+    },AD_WATCH_TIMEOUT_MS);
+
     function handleResult(result){
+      // Security: if the ad network's own redirect (clicking the ad opens an
+      // external link) caused this promise to only resolve LATE — after the
+      // user backgrounded/closed the Mini App and later started a completely
+      // fresh ad attempt for the same or another topic — this result belongs
+      // to that old, abandoned attempt. It must never be allowed to count
+      // toward whatever attempt is currently active; silently discard it.
+      if(myToken!==currentAdToken || !currentTopic || String(currentTopic.id)!==myTopicId){
+        console.warn('Ignoring stale ad result from an abandoned attempt.');
+        return;
+      }
+      clearAdWatchTimer();
       if(result && result.done===false){resetAd('⚠️ Ad সম্পূর্ণ দেখা হয়নি, তাই এটা count হয়নি। আবার চেষ্টা করুন।');return}
-      adCompleted=true;recordAd(button);
+      adCompleted=true;
+      // Make sure at least AD_MIN_WATCH_MS has actually elapsed before we
+      // ever ask the server to record this — see AD_MIN_WATCH_MS above.
+      var elapsed=Date.now()-myStartedAt;
+      var wait=Math.max(0,AD_MIN_WATCH_MS-elapsed);
+      setTimeout(function(){
+        if(myToken!==currentAdToken){return}
+        recordAd(button,myToken);
+      },wait);
     }
 
     var network=pickAdNetwork();
     try{
       showNetworkAd(network).then(handleResult).catch(function(e){
         console.warn('Primary ad network ('+network+') failed, falling back:',e);
+        if(myToken!==currentAdToken) return;
         // One network being down/unapproved shouldn't block unlocking —
         // silently retry with the other network instead.
         var fallback=network==='adsgram'?'monetag':'adsgram';
         showNetworkAd(fallback).then(handleResult).catch(function(e2){
-          console.error(e2);resetAd('⚠️ এই মুহূর্তে কোনো Ad পাওয়া যায়নি। একটু পর আবার চেষ্টা করুন।');
+          console.error(e2);
+          if(myToken!==currentAdToken) return;
+          resetAd('⚠️ এই মুহূর্তে কোনো Ad পাওয়া যায়নি। একটু পর আবার চেষ্টা করুন।');
         });
       });
     }catch(e){console.error(e);resetAd('⚠️ এই মুহূর্তে কোনো Ad পাওয়া যায়নি। একটু পর আবার চেষ্টা করুন।')}
   }).catch(function(e){console.error(e);resetAd('Ad শুরু করা যায়নি')});
 }
 
-async function recordAd(button){
+async function recordAd(button,token){
   if(!adCompleted||!isWatching||!currentTopic)return;
   adCompleted=false;
   document.getElementById('ad-overlay').classList.remove('show');
   try{
     var r=await fetch(API+'/ad-complete',{
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({userId:userId(),topicId:currentTopic.id,token:currentAdToken})
+      body:JSON.stringify({userId:userId(),topicId:currentTopic.id,token:token||currentAdToken})
     });
     currentAdToken=null;
     var data=await r.json();
@@ -619,29 +672,43 @@ async function recordAd(button){
       // UNLOCKED" instead of being stuck on "Preparing Ad…" forever.
       if(button)button.textContent='CONTENT UNLOCKED';
       loadUnlocked();
-      if(tg && tg.openTelegramLink){
-        tg.openTelegramLink(data.startUrl);
-        // Force the Mini App itself to close so Telegram is forced to bring
-        // the bot chat to the front — this is what actually triggers the
-        // "new message" notification. openTelegramLink alone can silently
-        // no-op when the target is the same chat the Mini App was launched
-        // from (i.e. opened via the bot's own Menu Button).
-        if(tg.close) setTimeout(function(){tg.close()},300);
-      } else {
+      try{
+        if(tg && tg.openTelegramLink){
+          tg.openTelegramLink(data.startUrl);
+          // Force the Mini App itself to close so Telegram is forced to bring
+          // the bot chat to the front — this is what actually triggers the
+          // "new message" notification. openTelegramLink alone can silently
+          // no-op when the target is the same chat the Mini App was launched
+          // from (i.e. opened via the bot's own Menu Button).
+          if(tg.close) setTimeout(function(){tg.close()},300);
+        } else {
+          window.location.href=data.startUrl;
+        }
+      }catch(redirectError){
+        // If openTelegramLink itself throws (older client versions, odd
+        // WebView states, etc.) never leave the user stranded on a page
+        // that merely says "unlocked" — always fall back to a plain
+        // navigation so they still land in the bot chat.
+        console.error('Redirect to bot chat failed, falling back:',redirectError);
         window.location.href=data.startUrl;
       }
       return;
     }
     adCount=Number(data.count)||0;
     totalAds=Number(data.required)||totalAds;
-    if(button)button.textContent=data.unlocked?'CONTENT UNLOCKED':'('+adCount+'/'+totalAds+') Ads';
+    if(button){button.textContent=data.unlocked?'CONTENT UNLOCKED':'('+adCount+'/'+totalAds+') Ads';button.disabled=false;}
     if(data.unlocked){
       isWatching=false;
       await loadUnlocked();
       return;
     }
+    // Do NOT auto-start the next ad. Ad-network policies generally require a
+    // genuine, separate user click before each ad — chaining them
+    // automatically is both against those policies and risks the account
+    // being flagged. The button is re-enabled above so the user taps it
+    // themselves for the next one.
     isWatching=false;
-    setTimeout(function(){if(currentTopic&&!unlocked[currentTopic.id])startAds(currentTopic,button)},500);
+    showAdProgressToast(adCount,totalAds);
   }catch(e){
     console.error('Ad completion error',e);
     // Surface the server's own reason (e.g. "সম্পূর্ণ দেখা হয়নি" from the
@@ -651,7 +718,23 @@ async function recordAd(button){
   }
 }
 
+function showAdProgressToast(count,total){
+  var t=document.createElement('div');
+  t.textContent='✅ '+count+'/'+total+' Ad সম্পন্ন হয়েছে — বাকিটার জন্য আবার বাটনে ক্লিক করুন';
+  t.style.cssText='position:fixed;left:50%;bottom:88px;transform:translateX(-50%);'+
+    'background:rgba(18,18,22,.95);color:#fff;padding:10px 16px;border-radius:12px;'+
+    'font-size:12.5px;line-height:1.4;z-index:9999;box-shadow:0 10px 28px rgba(0,0,0,.4);'+
+    'max-width:86%;text-align:center;opacity:0;transition:opacity .25s ease;pointer-events:none';
+  document.body.appendChild(t);
+  requestAnimationFrame(function(){t.style.opacity='1';});
+  setTimeout(function(){
+    t.style.opacity='0';
+    setTimeout(function(){t.remove();},300);
+  },2400);
+}
+
 function resetAd(message){
+  clearAdWatchTimer();
   document.getElementById('ad-overlay').classList.remove('show');
   isWatching=false;adCompleted=false;
   if(message){
@@ -675,6 +758,23 @@ document.querySelectorAll('.tab').forEach(function(tab){
   });
 });
 document.getElementById('backHome').addEventListener('click',openHome);
+
+// If the user leaves the Mini App mid-ad (e.g. taps through the ad's own
+// click-out link to an external site) and either doesn't come back, or
+// comes back but the ad SDK's promise never settles, don't leave the button
+// stuck disabled forever. Give it a few seconds grace after returning, then
+// let them try again — this never counts anything by itself, it only
+// unblocks a retry.
+document.addEventListener('visibilitychange',function(){
+  if(document.visibilityState==='visible' && isWatching){
+    var tokenAtPause=currentAdToken;
+    setTimeout(function(){
+      if(isWatching && currentAdToken===tokenAtPause){
+        resetAd('⚠️ Ad সম্পূর্ণ হয়নি। আবার চেষ্টা করুন।');
+      }
+    },6000);
+  }
+});
 
 showSplash();
 var deepTopicId = startParam();
