@@ -4268,6 +4268,81 @@ async function migrateCleanupSchedule() {
 }
 
 // =============================================
+// 🛠️ One-time fix for stale ad-progress (only once)
+// =============================================
+//
+// 🐛 FIX (repeat-unlock bug, retroactive part): the code used to never reset
+// adProgress[topicId] once a topic's unlock expired, only unlockedTopics /
+// topicUnlockTime got cleared. The new cleanup pass now resets adProgress
+// the moment a topic actually expires OUT of unlockedTopics — but for every
+// topic that had ALREADY expired under the old code (before this fix was
+// deployed), that transition already happened in the past, so the new reset
+// logic has no future trigger to ever clean those up. Their adProgress entry
+// is left permanently sitting at `adsRequired`, and the very next watch
+// re-unlocks them with just one ad, forever. This is a one-time sweep that
+// finds and clears exactly those orphaned entries — any adProgress[topicId]
+// that's already maxed out (>= that topic's adsRequired) for a topic the
+// user does NOT currently have in unlockedTopics — without touching
+// legitimate in-progress counts (someone mid-way through watching ads for a
+// topic they haven't unlocked yet is left completely alone).
+async function migrateStaleAdProgress() {
+  const markerRef = db.collection('system').doc('cleanup');
+  try {
+    const marker = await markerRef.get();
+    if (marker.exists && Number(marker.data().adProgressVersion) >= 1) {
+      console.log('⏭️ Stale ad-progress migration already done.');
+      return;
+    }
+    console.log('🛠️ Clearing stale ad-progress left over from before the repeat-unlock fix...');
+
+    const topicsSnap = await db.collection('topics').get();
+    const requiredById = new Map();
+    topicsSnap.docs.forEach(d => requiredById.set(d.id, Math.max(1, Number(d.data().adsRequired) || 1)));
+
+    let changed = 0;
+    let lastDoc = null;
+    for (let page = 0; page < 40; page++) { // cap: up to 40 * 500 = 20,000 users
+      let q = db.collection('users').orderBy(admin.firestore.FieldPath.documentId()).limit(500);
+      if (lastDoc) q = q.startAfter(lastDoc);
+      const snap = await q.get();
+      if (snap.empty) break;
+      lastDoc = snap.docs[snap.docs.length - 1];
+
+      let batch = db.batch();
+      let batchCount = 0;
+      for (const doc of snap.docs) {
+        const data = doc.data();
+        const progress = data.adProgress;
+        if (!progress || typeof progress !== 'object') continue;
+        const unlockedTopics = Array.isArray(data.unlockedTopics) ? data.unlockedTopics : [];
+        const newProgress = { ...progress };
+        let touched = false;
+        for (const topicId of Object.keys(progress)) {
+          if (unlockedTopics.includes(topicId)) continue; // currently active — leave it alone
+          const required = requiredById.get(topicId) || 1;
+          if ((Number(progress[topicId]) || 0) >= required) {
+            delete newProgress[topicId];
+            touched = true;
+          }
+        }
+        if (touched) {
+          batch.set(doc.ref, { adProgress: newProgress }, { merge: true });
+          batchCount++;
+          changed++;
+        }
+      }
+      if (batchCount > 0) await batch.commit();
+      if (snap.size < 500) break;
+    }
+
+    await markerRef.set({ adProgressVersion: 1, adProgressMigratedAt: Date.now() }, { merge: true });
+    console.log(`✅ Stale ad-progress cleared for ${changed} users.`);
+  } catch (error) {
+    console.error('❌ Stale ad-progress migration error:', error.message);
+  }
+}
+
+// =============================================
 // 🚀 LAUNCH (Render Free-এর জন্য safe config)
 // =============================================
 
@@ -4291,6 +4366,11 @@ bot.launch({
     console.log('🤖 Bot started successfully (polling mode)');
     // Migration একবার চালাই
     migrateCleanupSchedule().catch(() => {});
+    // 🐛 FIX (repeat-unlock bug, retroactive part): clear out any adProgress
+    // left stuck at "maxed out" from before this fix existed (see the
+    // function's own comment above for why this can't self-heal without a
+    // one-time sweep).
+    migrateStaleAdProgress().catch(() => {});
     // 🐛 FIX (delayed cleanup bug): Render's free tier spins the server down
     // after ~15 min idle. While asleep, node-cron can't fire — so any video
     // due for deletion just sits there until the next incoming request
