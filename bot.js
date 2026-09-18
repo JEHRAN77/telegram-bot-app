@@ -1491,16 +1491,12 @@ async function getRepostPostsForChannel(channelId) {
     console.warn('⚠️ channelPosts index unavailable:', e.message);
   }
 
-  // Legacy topic-level records: only needed for posts saved by older versions
-  // of the bot, before the channelPosts index existed. Once a channel has any
-  // posts in the new index (the normal case for everyday use), we skip this
-  // entirely — looping every topic on every single button click is the part
-  // that used to get slower and slower as your content library grew. This
-  // keeps clicks fast no matter how large your topic library gets, while
-  // still supporting old data for channels that predate the new index.
-  if (map.size === 0) {
-    const topics = await getTopicsCached();
-    topics.forEach(t => {
+  // Legacy topic-level records: posts saved by older versions of the bot,
+  // before the channelPosts index existed. Always merged in (not just when
+  // the new index is empty) so a channel's oldest posts never silently
+  // disappear from the Repost list just because it also has newer posts.
+  const topics = await getTopicsCached();
+  topics.forEach(t => {
       const records = Array.isArray(t.postRecords) ? t.postRecords : [];
       records.forEach(r => {
         if (String(r.channelId) !== wanted || !r.messageId) return;
@@ -1519,7 +1515,6 @@ async function getRepostPostsForChannel(channelId) {
         }
       });
     });
-  }
 
   return Array.from(map.values())
     .sort((a,b) => (Number(b.postedAt)||0) - (Number(a.postedAt)||0));
