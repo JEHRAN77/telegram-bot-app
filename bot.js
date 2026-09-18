@@ -1163,7 +1163,7 @@ bot.on('video', async (ctx) => {
       const result = await appendVideoToTopic(appendVideoData[userId].topicId, storedFileId);
       delete appendVideoData[userId];
       if (!result) return ctx.reply('❌ Topic আর পাওয়া যাচ্ছে না।');
-      return ctx.reply(`✅ ভিডিও যুক্ত হয়েছে!\n\n📌 ${result.title}\n📹 এখন মোট ভিডিও: ${result.videoCount}\n🆔 ${result.id}`, { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🎬 Topic দেখুন', 'aview:' + result.id)], [Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup });
+      return ctx.reply(`✅ ভিডিও যুক্ত হয়েছে!\n\n📌 ${escapeHtml(result.title)}\n📹 এখন মোট ভিডিও: ${result.videoCount}\n🆔 <code>${escapeHtml(result.id)}</code>`, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🎬 Topic দেখুন', 'aview:' + result.id)], [Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup });
     } catch (error) {
       console.error('❌ Append Video storage error:', error);
       await ctx.reply('❌ ভিডিও স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে।').catch(() => {});
@@ -1234,7 +1234,7 @@ bot.on('document', async (ctx) => {
       const result = await appendVideoToTopic(appendVideoData[userId].topicId, storedFileId);
       delete appendVideoData[userId];
       if (!result) return ctx.reply('❌ Topic আর পাওয়া যাচ্ছে না।');
-      return ctx.reply(`✅ ভিডিও যুক্ত হয়েছে!\n\n📌 ${result.title}\n📹 এখন মোট ভিডিও: ${result.videoCount}\n🆔 ${result.id}`, { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🎬 Topic দেখুন', 'aview:' + result.id)], [Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup });
+      return ctx.reply(`✅ ভিডিও যুক্ত হয়েছে!\n\n📌 ${escapeHtml(result.title)}\n📹 এখন মোট ভিডিও: ${result.videoCount}\n🆔 <code>${escapeHtml(result.id)}</code>`, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🎬 Topic দেখুন', 'aview:' + result.id)], [Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup });
     } catch (error) {
       console.error('❌ Append Video document storage error:', error);
       await ctx.reply('❌ ভিডিও স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে।').catch(() => {});
@@ -1652,9 +1652,9 @@ bot.action('post_confirm', async (ctx) => {
     delete postData[userId];
     await ctx.reply(
       `📤 Post সম্পন্ন হয়েছে (${postingChannels.length}টি Channel):\n\n` +
-      `🆔 Video/Topic ID: ${state.topicId}\n\n` +
-      lines.join('\n'),
-      { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup }
+      `🆔 Video/Topic ID: <code>${escapeHtml(state.topicId)}</code>\n\n` +
+      escapeHtml(lines.join('\n')),
+      { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup }
     );
   } catch (error) {
     console.error('❌ /post publish error:', error);
@@ -1904,10 +1904,10 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
     if (!topics.length) return ctx.reply('📭 এখনো কোনো Video/Topic নেই।');
     const lines = topics.map((t, i) => {
       const count = Array.isArray(t.videos) ? t.videos.length : (t.videoId ? 1 : 0);
-      return `${i + 1}. ${String(t.title || 'নামবিহীন')}\n🆔 ${t.id}\n📹 Videos: ${count} | 🎯 Ads: ${Number(t.adsRequired || 1)}`;
+      return `${i + 1}. ${escapeHtml(t.title || 'নামবিহীন')}\n🆔 <code>${escapeHtml(t.id)}</code>\n📹 Videos: ${count} | 🎯 Ads: ${Number(t.adsRequired || 1)}`;
     });
     const text = `📋 ALL VIDEOS / TOPICS\n\n${lines.join('\n\n')}`;
-    return ctx.reply(text, Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'adm_videos')]]));
+    return ctx.reply(text, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'adm_videos')]]).reply_markup });
   }
   if (action === 'video_ids') {
     const topics = await getTopicsCached();
@@ -2105,13 +2105,13 @@ bot.action(/^aview:(.+)$/, async ctx=>{
   const id=ctx.match[1]; const doc=await db.collection('topics').doc(id).get();
   if(!doc.exists) return ctx.answerCbQuery('❌ Video পাওয়া যায়নি');
   const t=doc.data(); await ctx.answerCbQuery();
-  return ctx.editMessageText(`🎬 VIDEO DETAILS\n\n📌 ${t.title||'নামবিহীন'}\n🆔 ${id}\n📹 Videos: ${t.videoCount||0}\n🎯 Ads: ${t.adsRequired||1}\n👁️ Views: ${Number(t.unlockCount||0)}`,Markup.inlineKeyboard([
+  return ctx.editMessageText(`🎬 VIDEO DETAILS\n\n📌 ${escapeHtml(t.title||'নামবিহীন')}\n🆔 <code>${escapeHtml(id)}</code>\n📹 Videos: ${t.videoCount||0}\n🎯 Ads: ${t.adsRequired||1}\n👁️ Views: ${Number(t.unlockCount||0)}`,{ parse_mode: 'HTML', ...Markup.inlineKeyboard([
     [Markup.button.callback('✏️ Rename','av_rename:'+id),Markup.button.callback('🖼️ Thumbnail','av_thumb:'+id)],
     [Markup.button.callback('🎯 Ads','av_ads:'+id),Markup.button.callback('📤 Post','apost_topic:'+id)],
     [Markup.button.callback('📼 Video যুক্ত করুন','av_append:'+id),Markup.button.callback('🧬 Duplicate','av_duplicate:'+id)],
     [Markup.button.callback('🗑️ Delete','av_delete:'+id)],
     [Markup.button.callback('⬅️ Back','adm_list')]
-  ]));
+  ])});
 });
 bot.action(/^av_rename:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); await ctx.answerCbQuery(); renameData[ctx.from.id]={step:'title',topicId:ctx.match[1]}; const d=await db.collection('topics').doc(ctx.match[1]).get(); return ctx.reply(`✏️ Current: ${d.exists?(d.data().title||'নামবিহীন'):'নেই'}\n\nনতুন Title পাঠান:`); });
 bot.action(/^av_thumb:(.+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCbQuery('❌'); await ctx.answerCbQuery(); thumbnailData[ctx.from.id]={step:'photo',topicId:ctx.match[1]}; return ctx.reply('🖼️ নতুন Thumbnail Photo পাঠান:'); });
@@ -2143,10 +2143,10 @@ bot.action(/^av_delete:(.+)$/, async ctx=>{
   await ctx.answerCbQuery();
   const title = d.exists ? (d.data().title || 'নামবিহীন') : 'নামবিহীন';
   return ctx.editMessageText(
-    `⚠️ আপনি কি নিশ্চিত?\n\n📌 ${title}\n🆔 ${id}\n\nএকবার Delete করলে এটি আর ফেরত আনা যাবে না।`,
-    Markup.inlineKeyboard([
+    `⚠️ আপনি কি নিশ্চিত?\n\n📌 ${escapeHtml(title)}\n🆔 <code>${escapeHtml(id)}</code>\n\nএকবার Delete করলে এটি আর ফেরত আনা যাবে না।`,
+    { parse_mode: 'HTML', ...Markup.inlineKeyboard([
       [Markup.button.callback('✅ হ্যাঁ, Delete করুন', 'av_delete_confirm:'+id), Markup.button.callback('❌ বাতিল', 'aview:'+id)]
-    ])
+    ]) }
   );
 });
 bot.action(/^av_delete_confirm:(.+)$/, async ctx=>{
@@ -2606,12 +2606,12 @@ async function renderScheduledPostsList(ctx) {
       const sp = d.data();
       const repeatTag = sp.recurrence === 'daily' ? ' 🔁Daily' : sp.recurrence === 'weekly' ? ' 🔁Weekly' : '';
       const title = sp.title || fallbackTitles[sp.topicId] || 'নামবিহীন ভিডিও';
-      text += `${i + 1}. 📌 ${title} (🆔 ${sp.topicId}) | 📅 ${formatDhakaDateTime(sp.scheduledAt)}${repeatTag} | 📢 ${(sp.channels || []).length}টি Channel\n`;
+      text += `${i + 1}. 📌 ${escapeHtml(title)} (🆔 <code>${escapeHtml(sp.topicId)}</code>) | 📅 ${formatDhakaDateTime(sp.scheduledAt)}${repeatTag} | 📢 ${(sp.channels || []).length}টি Channel\n`;
       const shortTitle = safeTruncate(title, 26) + (Array.from(title).length > 26 ? '…' : '');
       rows.push([Markup.button.callback(`❌ Cancel: ${shortTitle}`, `schedcancel_ask:${d.id}`)]);
     });
     rows.push([Markup.button.callback('⬅️ Back', 'adm_home')]);
-    return ctx.editMessageText(text, Markup.inlineKeyboard(rows));
+    return ctx.editMessageText(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard(rows) });
   } catch (error) {
     console.error('❌ Scheduled list error:', error.message);
     return ctx.reply('❌ তালিকা আনতে সমস্যা হয়েছে: ' + error.message + '\n\n(Firestore-এ একটা composite index লাগতে পারে — Render/console log-এ যে link আসবে সেটায় ক্লিক করলেই index তৈরি হয়ে যাবে।)');
@@ -2634,14 +2634,14 @@ bot.action(/^schedcancel_ask:(.+)$/, async (ctx) => {
     const repeatTag = sp.recurrence === 'daily' ? '\n🔁 প্রতিদিন repeat হচ্ছিল' : sp.recurrence === 'weekly' ? '\n🔁 প্রতি সপ্তাহে repeat হচ্ছিল' : '';
     return ctx.editMessageText(
       `⚠️ আপনি কি নিশ্চিত এই Scheduled Post বাতিল করতে চান?\n\n` +
-      `📌 Title: ${sp.title || 'নামবিহীন ভিডিও'}\n` +
-      `🆔 Topic ID: ${sp.topicId}\n` +
+      `📌 Title: ${escapeHtml(sp.title || 'নামবিহীন ভিডিও')}\n` +
+      `🆔 Topic ID: <code>${escapeHtml(sp.topicId)}</code>\n` +
       `📅 সময়: ${formatDhakaDateTime(sp.scheduledAt)}${repeatTag}\n` +
       `📢 Channel: ${(sp.channels || []).length}টি`,
-      Markup.inlineKeyboard([
+      { parse_mode: 'HTML', ...Markup.inlineKeyboard([
         [Markup.button.callback('✅ হ্যাঁ, বাতিল করুন', `schedcancel_yes:${id}`)],
         [Markup.button.callback('⬅️ না, ফিরে যান', 'adm_scheduled')]
-      ])
+      ]) }
     );
   } catch (error) {
     console.error('❌ schedcancel_ask error:', error.message);
@@ -2885,8 +2885,8 @@ bot.on('text', async (ctx) => {
     }
     await recordTopicPost(topicId || 'repost', pending.channelId, pending.messageId, pending.type, pending.caption, title);
     return ctx.reply(
-      `✅ Repost list-এ যোগ হয়েছে।\n\n📢 ${pending.channelId}\n🆔 Message ID: ${pending.messageId}${topicId ? `\n🔗 Video/Topic: ${topicId}` : ''}`,
-      Markup.inlineKeyboard([[Markup.button.callback('📢 Repost Menu', 'adm_repost')]])
+      `✅ Repost list-এ যোগ হয়েছে।\n\n📢 ${escapeHtml(String(pending.channelId))}\n🆔 Message ID: <code>${escapeHtml(String(pending.messageId))}</code>${topicId ? `\n🔗 Video/Topic: <code>${escapeHtml(topicId)}</code>` : ''}`,
+      { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('📢 Repost Menu', 'adm_repost')]]) }
     );
   }
 
@@ -2995,10 +2995,11 @@ bot.on('text', async (ctx) => {
 
         return ctx.reply(
           `✅ Video/Topic পাওয়া গেছে।\n\n` +
-          `📌 Title: ${state.title}\n` +
-          `🆔 ID: ${topicId}\n\n` +
+          `📌 Title: ${escapeHtml(state.title)}\n` +
+          `🆔 ID: <code>${escapeHtml(topicId)}</code>\n\n` +
           `✍️ এখন Channel Post-এর Caption লিখুন।\n` +
-          `Caption না চাইলে "skip" লিখুন।`
+          `Caption না চাইলে "skip" লিখুন।`,
+          { parse_mode: 'HTML' }
         );
       } catch (error) {
         console.error('❌ /post topic lookup error:', error);
@@ -3013,16 +3014,16 @@ bot.on('text', async (ctx) => {
       return ctx.reply(
         `👀 Post Preview\n\n` +
         `🎬 Type: ${state.type === 'video' ? 'Video' : 'Photo'}\n` +
-        `📌 Title: ${state.title || 'নামবিহীন ভিডিও'}\n` +
-        `🆔 Video/Topic ID: ${state.topicId}\n` +
-        `📝 Caption: ${state.caption || '(কোনো caption নেই)'}\n\n` +
+        `📌 Title: ${escapeHtml(state.title || 'নামবিহীন ভিডিও')}\n` +
+        `🆔 Video/Topic ID: <code>${escapeHtml(state.topicId)}</code>\n` +
+        `📝 Caption: ${escapeHtml(state.caption || '(কোনো caption নেই)')}\n\n` +
         `Buttons:\n▶️ ভিডিও দেখুন\nHelp Admin\n\n` +
         `সব ঠিক থাকলে Post চাপুন, অথবা পরে নির্দিষ্ট সময়ে Post করতে Schedule বাটন চাপুন।`,
-        Markup.inlineKeyboard([
+        { parse_mode: 'HTML', ...Markup.inlineKeyboard([
           [Markup.button.callback('✅ Post Now', 'post_confirm')],
           [Markup.button.callback('🕒 Schedule করুন', 'post_schedule')],
           [Markup.button.callback('❌ Cancel', 'post_cancel')]
-        ])
+        ]) }
       );
     }
 
@@ -3063,7 +3064,7 @@ bot.on('text', async (ctx) => {
       await db.collection('topics').doc(topicId).delete();
       delete adminVideoData[userId];
       invalidateTopicsCache();
-      return ctx.reply(`✅ Video/Topic delete হয়েছে।\n🆔 ${topicId}`);
+      return ctx.reply(`✅ Video/Topic delete হয়েছে।\n🆔 <code>${escapeHtml(topicId)}</code>`, { parse_mode: 'HTML' });
     }
   }
 
@@ -3079,7 +3080,7 @@ bot.on('text', async (ctx) => {
       if (!text || text.length > 200) return ctx.reply('❌ Title 1-200 অক্ষরের মধ্যে দিন।');
       await db.collection('topics').doc(state.topicId).update({ title: text, updatedAt: new Date().toISOString() });
       delete renameData[userId]; invalidateTopicsCache();
-      return ctx.reply(`✅ Title পরিবর্তন হয়েছে।\n🆔 ${state.topicId}\n📌 ${text}`);
+      return ctx.reply(`✅ Title পরিবর্তন হয়েছে।\n🆔 <code>${escapeHtml(state.topicId)}</code>\n📌 ${escapeHtml(text)}`, { parse_mode: 'HTML' });
     }
   }
 
@@ -3176,9 +3177,10 @@ bot.on('text', async (ctx) => {
         delete updateAdsData[userId];
         return ctx.reply(
           `✅ Ads count সফলভাবে আপডেট হয়েছে!\n\n` +
-          `🆔 Video/Topic ID: ${state.topicId}\n` +
+          `🆔 Video/Topic ID: <code>${escapeHtml(state.topicId)}</code>\n` +
           `আগে ছিল: ${oldAds}টি Ads\n` +
-          `এখন হবে: ${ads}টি Ads`
+          `এখন হবে: ${ads}টি Ads`,
+          { parse_mode: 'HTML' }
         );
       } catch (error) {
         console.error('❌ Error updating ads count:', error);
@@ -3365,7 +3367,7 @@ bot.on('photo', async (ctx) => {
       await db.collection('topics').doc(thumbnailData[userId].topicId).update({ thumbnail: storedFileId, updatedAt: new Date().toISOString() });
       const id = thumbnailData[userId].topicId;
       delete thumbnailData[userId]; invalidateTopicsCache();
-      return ctx.reply(`✅ Thumbnail আপডেট হয়েছে।\n🆔 ${id}`);
+      return ctx.reply(`✅ Thumbnail আপডেট হয়েছে।\n🆔 <code>${escapeHtml(id)}</code>`, { parse_mode: 'HTML' });
     } catch (e) { return ctx.reply('❌ Thumbnail আপডেট করতে সমস্যা হয়েছে।'); }
   }
 
@@ -3761,17 +3763,50 @@ app.post('/api/ad-complete', async (req, res) => {
       const isNewUser = !snap.exists;
       const data = snap.exists ? snap.data() : {};
       const progress = { ...(data.adProgress || {}) };
-      const unlockedTopics = data.unlockedTopics || [];
+      let unlockedTopics = data.unlockedTopics || [];
+      const topicUnlockTime = { ...(data.topicUnlockTime || {}) };
+      const nowTx = Date.now();
+
+      // 🐛 FIX (repeat-unlock bug, live version): unlockedTopics is only
+      // pruned of expired entries by the background cleanup cron (every 2
+      // min) — and that cron can lag (Render free-tier sleep, or simply not
+      // having reached this user yet). If a topic's 30-min window has
+      // already elapsed but the cron hasn't caught up, `unlockedTopics`
+      // still lists it as active even though the Mini App itself (which
+      // checks topicUnlockTime directly in /api/user-unlocked) already shows
+      // it as locked again. Trusting stale array membership here let anyone
+      // re-unlock an actually-expired topic with just the ONE ad they'd
+      // just watched. Now we check the real timestamp ourselves instead of
+      // relying on the cron having already run.
+      const unlockTime = Number(topicUnlockTime[topicId]) || 0;
+      const stillActive = unlockedTopics.includes(topicId) && unlockTime && (nowTx - unlockTime) < THIRTY_MINUTES;
+      let expiredCleanup = false;
+      if (unlockedTopics.includes(topicId) && !stillActive) {
+        // Expired but the cron hasn't cleaned it up yet — do it right now so
+        // this watch actually has to earn the full ad count again, instead
+        // of short-circuiting as "already unlocked".
+        unlockedTopics = unlockedTopics.filter(t => t !== topicId);
+        delete topicUnlockTime[topicId];
+        delete progress[topicId];
+        expiredCleanup = true;
+      }
       const current = Number(progress[topicId]) || 0;
-      if (unlockedTopics.includes(topicId)) return { count: required, required, unlocked: true, limitReached: false, dailyUsed: Number(data.dailyAdsUsed) || 0, adViewCounted: false };
+      if (stillActive) return { count: required, required, unlocked: true, limitReached: false, dailyUsed: Number(data.dailyAdsUsed) || 0, adViewCounted: false };
 
       const dailyUsed = data.dailyAdDate === today ? (Number(data.dailyAdsUsed) || 0) : 0;
-      if (dailyUsed >= dailyLimit) return { count: current, required, unlocked: false, limitReached: true, dailyUsed, adViewCounted: false };
+      if (dailyUsed >= dailyLimit) {
+        // Still persist the just-discovered expiry cleanup even though this
+        // particular watch doesn't count (daily limit reached) — otherwise
+        // the next attempt would redo the same stale-array check for nothing.
+        if (expiredCleanup) tx.set(userRef, { adProgress: progress, unlockedTopics, topicUnlockTime }, { merge: true });
+        return { count: current, required, unlocked: false, limitReached: true, dailyUsed, adViewCounted: false };
+      }
 
       const next = Math.min(current + 1, required);
       progress[topicId] = next;
 
       const userWrite = { adProgress: progress, dailyAdDate: today, dailyAdsUsed: dailyUsed + 1 };
+      if (expiredCleanup) Object.assign(userWrite, { unlockedTopics, topicUnlockTime });
       if (isNewUser) {
         // 🐛 FIX: this is the FIRST-EVER Firestore doc for this user in many
         // cases (anyone who opens the Mini App and watches an ad before ever
@@ -3986,8 +4021,8 @@ async function firePostSchedule(docId) {
   if (ADMIN_ID) {
     await safeSendMessage(
       ADMIN_ID,
-      `🕒 Scheduled Post সম্পন্ন হয়েছে\n\n📌 Title: ${sp.title || 'নামবিহীন ভিডিও'}\n🆔 Video/Topic ID: ${sp.topicId}\n\n${lines.join('\n')}`,
-      { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup }
+      `🕒 Scheduled Post সম্পন্ন হয়েছে\n\n📌 Title: ${escapeHtml(sp.title || 'নামবিহীন ভিডিও')}\n🆔 Video/Topic ID: <code>${escapeHtml(sp.topicId)}</code>\n\n${escapeHtml(lines.join('\n'))}`,
+      { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup }
     ).catch(() => {});
   }
 }

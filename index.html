@@ -333,9 +333,17 @@ function buildHistoryContext(){
   });
   return {historyIds:historyIds,pref:pref};
 }
+// Rotation window: how often each user's personalized order/explore boost
+// reshuffles. Was keyed by calendar day (24h) before — bumped down to 2h so
+// suggestions actually feel fresh through the day instead of being frozen
+// from midnight to midnight.
+var ROTATION_WINDOW_MS=2*60*60*1000;
+function rotationKey(){
+  return Math.floor(Date.now()/ROTATION_WINDOW_MS);
+}
 function personalizedScore(t,index,ctx){
   var uid=userId()||'guest';
-  var today=new Date().toISOString().slice(0,10);
+  var rot=ctx.rotationKey;
   var active=!!unlocked[t.id];
   var score=0;
   if(!ctx.historyIds[String(t.id)]) score+=48; else score-=24;
@@ -353,16 +361,17 @@ function personalizedScore(t,index,ctx){
   // Exploration boost: your quieter/under-exposed videos (below the catalog's
   // average view count) get a real, per-user-rotating chance to land near the
   // top too — instead of the same popular handful always winning for every
-  // single user. Seeded by user+day+topic, so it's stable for one person in
-  // one day but different users (and the next day) see different videos get
-  // the boost — spreading views across your whole library over time instead
-  // of concentrating them on a few titles forever.
+  // single user. Seeded by user+rotation-window+topic, so it's stable for one
+  // person within one 2-hour window but different users (and the next
+  // window) see different videos get the boost — spreading views across your
+  // whole library over time instead of concentrating them on a few titles
+  // forever.
   if(viewsOf(t)<ctx.avgViews){
-    score+=seededScore(uid+'|explore|'+today+'|'+t.id)*20;
+    score+=seededScore(uid+'|explore|'+rot+'|'+t.id)*20;
   }
 
-  // Small deterministic daily rotation prevents the All tab from feeling static.
-  score+=seededScore(uid+'|'+today+'|'+t.id)*8;
+  // Small deterministic rotation (every 2h) prevents the All tab from feeling static.
+  score+=seededScore(uid+'|'+rot+'|'+t.id)*8;
   score+=Math.max(0,8-index*0.08);
   return score;
 }
@@ -384,6 +393,7 @@ function sortTopics(){
     // slower as the video library and a user's history both grew).
     var ctx=buildHistoryContext();
     ctx.avgViews=a.length?a.reduce(function(s,x){return s+viewsOf(x)},0)/a.length:0;
+    ctx.rotationKey=rotationKey();
     var scored=a.map(function(t,i){return {t:t,s:personalizedScore(t,i,ctx)}});
     scored.sort(function(x,y){return y.s-x.s});
     a=scored.map(function(x){return x.t});
