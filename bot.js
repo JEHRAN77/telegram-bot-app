@@ -1537,7 +1537,26 @@ async function getRepostPostsForChannel(channelId) {
       });
     });
 
-  return Array.from(map.values())
+  // Reposting a video-linked post creates a brand-new Telegram message (new
+  // messageId), so it was being stored as a second, separate entry — the same
+  // video showing up "duplicated" in the list every time it's reposted. Here
+  // we collapse those down to just the latest copy per Topic/Video per
+  // channel. Posts with no linked Topic (forwarded ones, topicId === 'repost')
+  // aren't clustered — they're genuinely separate pieces of content, so each
+  // stays listed on its own.
+  const all = Array.from(map.values());
+  const latestByTopic = new Map();
+  const standalone = [];
+  all.forEach(r => {
+    const tid = (r.topicId && r.topicId !== 'repost') ? String(r.topicId) : null;
+    if (!tid) { standalone.push(r); return; }
+    const existing = latestByTopic.get(tid);
+    if (!existing || (Number(r.postedAt) || 0) > (Number(existing.postedAt) || 0)) {
+      latestByTopic.set(tid, r);
+    }
+  });
+
+  return [...latestByTopic.values(), ...standalone]
     .sort((a,b) => (Number(b.postedAt)||0) - (Number(a.postedAt)||0));
 }
 
