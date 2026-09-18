@@ -2043,13 +2043,19 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
       if (snap.empty) {
         return ctx.editMessageText('📭 কোনো Scheduled Post নেই।', Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'adm_home')]]));
       }
+      // Look up each Topic's title so the list shows a recognizable name
+      // instead of just a bare ID — otherwise every entry looks identical.
+      const topicsForLookup = await getTopicsCached();
+      const topicTitleById = new Map(topicsForLookup.map(t => [String(t.id), t.title || 'নামবিহীন']));
       const rows = [];
       let text = '🕒 SCHEDULED POSTS\n\n';
       snap.docs.forEach((d, i) => {
         const sp = d.data();
         const repeatTag = sp.recurrence === 'daily' ? ' 🔁Daily' : sp.recurrence === 'weekly' ? ' 🔁Weekly' : '';
-        text += `${i + 1}. 🆔 Topic: ${sp.topicId} | 📅 ${formatDhakaDateTime(sp.scheduledAt)}${repeatTag} | 📢 ${(sp.channels || []).length}টি Channel\n`;
-        rows.push([Markup.button.callback(`❌ Cancel #${i + 1}`, `schedcancel:${d.id}`)]);
+        const topicTitle = safeTruncate(topicTitleById.get(String(sp.topicId)) || '', 40);
+        const topicLabel = topicTitle ? `${topicTitle} (🆔 ${sp.topicId})` : `🆔 ${sp.topicId}`;
+        text += `${i + 1}. 📌 ${topicLabel} | 📅 ${formatDhakaDateTime(sp.scheduledAt)}${repeatTag} | 📢 ${(sp.channels || []).length}টি Channel\n`;
+        rows.push([Markup.button.callback(`❌ Cancel #${i + 1}: ${safeTruncate(topicTitle || sp.topicId, 30)}`, `schedcancel:${d.id}`)]);
       });
       rows.push([Markup.button.callback('⬅️ Back', 'adm_home')]);
       return ctx.editMessageText(text, Markup.inlineKeyboard(rows));
@@ -2210,7 +2216,10 @@ function renderRepostPage(ctx, userId, page) {
     const caption = String(p.caption || p.title || '(Caption নেই)').replace(/\s+/g, ' ').trim();
     const media = p.type === 'photo' ? '🖼️' : '🎬';
     const date = p.postedAt ? new Date(Number(p.postedAt)).toLocaleDateString('en-GB') : '';
-    return [Markup.button.callback(`${media} ${safeTruncate(caption, 48)}${date ? ` • ${date}` : ''}`, `repost_post:${globalIndex}`)];
+    // Show the linked Video/Topic ID (when there is one) so posts with similar
+    // or generic captions can still be told apart at a glance.
+    const topicTag = (p.topicId && p.topicId !== 'repost') ? ` 🆔${p.topicId}` : '';
+    return [Markup.button.callback(`${media} ${safeTruncate(caption, 40)}${topicTag}${date ? ` • ${date}` : ''}`, `repost_post:${globalIndex}`)];
   });
 
   const navRow = [];
@@ -2240,8 +2249,16 @@ bot.action(/^repost_post:(\d+)$/, async ctx => {
   await ctx.answerCbQuery();
   const date = rec.postedAt ? new Date(Number(rec.postedAt)).toLocaleDateString('en-GB') : 'অজানা';
   const media = rec.type === 'photo' ? '🖼️ Photo' : '🎬 Video';
+  // Resolve the linked Video/Topic's title, if any, so the preview clearly
+  // confirms WHICH video is about to be reposted — not just a raw ID.
+  let topicLine = '';
+  if (rec.topicId && rec.topicId !== 'repost') {
+    const topicsForLookup = await getTopicsCached();
+    const t = topicsForLookup.find(x => String(x.id) === String(rec.topicId));
+    topicLine = `\n🎬 Video/Topic: ${t ? safeTruncate(t.title || 'নামবিহীন', 60) : 'পাওয়া যায়নি'} (🆔 ${rec.topicId})`;
+  }
   return ctx.editMessageText(
-    `⚠️ Repost Preview — ঠিক আছে তো?\n\n📢 Channel: ${rec.channelId}\n📦 Type: ${media}\n📅 আগে posted: ${date}\n📝 Caption:\n${String(rec.caption || rec.title || '(Caption নেই)').slice(0, 400)}`,
+    `⚠️ Repost Preview — ঠিক আছে তো?\n\n📢 Channel: ${rec.channelId}\n📦 Type: ${media}\n📅 আগে posted: ${date}${topicLine}\n📝 Caption:\n${String(rec.caption || rec.title || '(Caption নেই)').slice(0, 400)}`,
     Markup.inlineKeyboard([
       [Markup.button.callback('✅ হ্যাঁ, Repost করুন', 'repost_confirm:'+index), Markup.button.callback('❌ বাতিল', 'adm_repost')]
     ])
