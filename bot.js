@@ -14,6 +14,31 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
+// 🛡️ Telegram rejects an entire callback request with "inline keyboard
+// button text must be encoded in UTF-8" the moment ANY button's text
+// contains a lone (unpaired) UTF-16 surrogate. That happens whenever plain
+// `.slice(0, N)` truncates a string exactly through the middle of a
+// surrogate pair — most commonly an emoji inside a channel name, a custom
+// button name, a user's Telegram display name, a post caption, or a video
+// title (all free text admins/users can type, and Telegram display names in
+// particular are full of emoji). `.slice()` counts raw UTF-16 code units, so
+// it happily cuts a pair in half; this truncates on a whole-code-point
+// boundary instead, and also scrubs any stray lone surrogate that may
+// already be sitting in the string (e.g. from data saved before this fix).
+function safeTruncate(value, maxLen) {
+  const str = String(value == null ? '' : value);
+  // Array.from() splits by Unicode code point (surrogate pairs stay
+  // together), unlike .slice()/.substring() which split by raw UTF-16 code
+  // unit and can leave a lone surrogate dangling at the cut point.
+  const chars = Array.from(str);
+  const truncated = chars.length <= maxLen ? str : chars.slice(0, maxLen).join('');
+  // Defensive scrub: strip any lone surrogate left anywhere in the string
+  // (e.g. already-corrupted data from before this fix), since a single
+  // unpaired surrogate has no valid UTF-8 encoding and is exactly what
+  // triggers Telegram's "must be encoded in UTF-8" error.
+  return truncated.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+}
+
 // 🚫 NEVER process posts coming from Telegram channels.
 // The bot should only process user/private/group updates. This guard is the
 // final protection against Public Posting Channel media being copied to
@@ -669,7 +694,7 @@ async function renderChannelPicker(ctx) {
   const rows = active.map(c => {
     const key = c.id || c.channelId;
     const checked = state.selected.has(key) ? '✅' : '⬜';
-    return [Markup.button.callback(`${checked} ${String(c.name || c.channelId).slice(0, 35)}`, 'pch_toggle:' + key)];
+    return [Markup.button.callback(`${checked} ${safeTruncate(c.name || c.channelId, 35)}`, 'pch_toggle:' + key)];
   });
   if (!rows.length && POST_CHANNEL) {
     const checked = state.selected.has(POST_CHANNEL) ? '✅' : '⬜';
@@ -1820,7 +1845,7 @@ async function renderBulkTopicsPanel(ctx) {
 
   const rows = pageTopics.map(t => {
     const checked = bulkSelect.ids.has(t.id) ? '✅' : '⬜';
-    const title = String(t.title || 'নামবিহীন').slice(0, 30);
+    const title = safeTruncate(t.title || 'নামবিহীন', 30);
     const ads = Number(t.adsRequired || 0) || 0;
     return [Markup.button.callback(`${checked} ${title} (${ads} ads)`, `blk:${t.id}`)];
   });
@@ -1923,7 +1948,7 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
   }
   if (action === 'channels') {
     const channels = await getChannels();
-    const rows = channels.map(ch => [Markup.button.callback(`${ch.active === false ? '🔴' : '🟢'} ${String(ch.name||ch.channelId).slice(0,35)}`, `ach_view:${ch.id || ch.channelId}`)]);
+    const rows = channels.map(ch => [Markup.button.callback(`${ch.active === false ? '🔴' : '🟢'} ${safeTruncate(ch.name||ch.channelId, 35)}`, `ach_view:${ch.id || ch.channelId}`)]);
     rows.push([Markup.button.callback('➕ Add Channel', 'ach_add')]);
     rows.push([Markup.button.callback('⬅️ Back', 'adm_home')]);
     return ctx.editMessageText('📢 CHANNEL MANAGER\n\nএকটি Channel নির্বাচন করুন:', Markup.inlineKeyboard(rows));
@@ -1948,7 +1973,7 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
     // looks up by), not the filtered/active-only list — otherwise once any
     // channel is inactive, every button after it points at the wrong channel.
     const rows = channels
-      .map((ch, i) => (ch.active === false ? null : [Markup.button.callback(`📢 ${String(ch.name||ch.channelId).slice(0,35)}`, `repost_channel:${i}`)]))
+      .map((ch, i) => (ch.active === false ? null : [Markup.button.callback(`📢 ${safeTruncate(ch.name||ch.channelId, 35)}`, `repost_channel:${i}`)]))
       .filter(Boolean);
     if (!rows.length && POST_CHANNEL) rows.push([Markup.button.callback('📢 Posting Channel', `repost_channel:default`)]);
     rows.push([Markup.button.callback('📥 Forward করে যোগ করুন', 'adm_repost_forward')]);
@@ -2056,7 +2081,7 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
   if (action === 'buttons') {
     const bs=await getPostButtons();
     const rows=bs.map((b,i)=>[
-      Markup.button.callback(`${i+1}. ${String(b.name).slice(0,20)}`,'ab_edit:'+i),
+      Markup.button.callback(`${i+1}. ${safeTruncate(b.name, 20)}`,'ab_edit:'+i),
       Markup.button.callback(i===0?'　':'⬆️','ab_up:'+i),
       Markup.button.callback(i===bs.length-1?'　':'⬇️','ab_down:'+i),
       Markup.button.callback('🗑️','ab_del:'+i)
@@ -2177,7 +2202,7 @@ function renderRepostPage(ctx, userId, page) {
     const caption = String(p.caption || p.title || '(Caption নেই)').replace(/\s+/g, ' ').trim();
     const media = p.type === 'photo' ? '🖼️' : '🎬';
     const date = p.postedAt ? new Date(Number(p.postedAt)).toLocaleDateString('en-GB') : '';
-    return [Markup.button.callback(`${media} ${caption.slice(0, 48)}${date ? ` • ${date}` : ''}`, `repost_post:${globalIndex}`)];
+    return [Markup.button.callback(`${media} ${safeTruncate(caption, 48)}${date ? ` • ${date}` : ''}`, `repost_post:${globalIndex}`)];
   });
 
   const navRow = [];
@@ -2304,7 +2329,7 @@ bot.action(/^ab_del:(\d+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCb
 async function renderButtonManager(ctx) {
   const bs = await getPostButtons();
   const rows = bs.map((b, i) => [
-    Markup.button.callback(`${i + 1}. ${String(b.name).slice(0, 20)}`, 'ab_edit:' + i),
+    Markup.button.callback(`${i + 1}. ${safeTruncate(b.name, 20)}`, 'ab_edit:' + i),
     Markup.button.callback(i === 0 ? '　' : '⬆️', 'ab_up:' + i),
     Markup.button.callback(i === bs.length - 1 ? '　' : '⬇️', 'ab_down:' + i),
     Markup.button.callback('🗑️', 'ab_del:' + i)
@@ -2582,7 +2607,7 @@ async function renderScheduledPostsList(ctx) {
       const repeatTag = sp.recurrence === 'daily' ? ' 🔁Daily' : sp.recurrence === 'weekly' ? ' 🔁Weekly' : '';
       const title = sp.title || fallbackTitles[sp.topicId] || 'নামবিহীন ভিডিও';
       text += `${i + 1}. 📌 ${title} (🆔 ${sp.topicId}) | 📅 ${formatDhakaDateTime(sp.scheduledAt)}${repeatTag} | 📢 ${(sp.channels || []).length}টি Channel\n`;
-      const shortTitle = title.length > 26 ? title.slice(0, 26) + '…' : title;
+      const shortTitle = safeTruncate(title, 26) + (Array.from(title).length > 26 ? '…' : '');
       rows.push([Markup.button.callback(`❌ Cancel: ${shortTitle}`, `schedcancel_ask:${d.id}`)]);
     });
     rows.push([Markup.button.callback('⬅️ Back', 'adm_home')]);
@@ -2902,7 +2927,7 @@ bot.on('text', async (ctx) => {
   if (postData[userId]) {
     const state = postData[userId];
 
-    if (state.step === 'channel_name') { state.name=text.slice(0,80); state.step='channel_id'; return ctx.reply('🆔 Channel ID দিন (উদাহরণ: -1001234567890):'); }
+    if (state.step === 'channel_name') { state.name=safeTruncate(text,80); state.step='channel_id'; return ctx.reply('🆔 Channel ID দিন (উদাহরণ: -1001234567890):'); }
     if (state.step === 'channel_id') { state.channelId=text; state.step='channel_link'; return ctx.reply('🔗 Channel link/username দিন (না থাকলে skip লিখুন):'); }
     if (state.step === 'channel_link') {
       state.link = text.toLowerCase() === 'skip' ? '' : text;
@@ -2924,12 +2949,12 @@ bot.on('text', async (ctx) => {
       delete postData[userId];
       return ctx.reply(`✅ Channel Added (Bot Admin verified)\n\n📢 ${c.name}\n🆔 ${c.channelId}`, Markup.inlineKeyboard([[Markup.button.callback('📤 Post Here', 'apostch:' + c.id)], [Markup.button.callback('📢 Channel Manager', 'adm_channels')]]));
     }
-    if (state.step === 'channel_edit_name') { state.name=text.slice(0,80); state.step='channel_edit_id'; return ctx.reply(`🆔 Current ID: ${state.channel.channelId||''}\n\nনতুন Channel ID দিন (না বদলালে আগেরটাই লিখুন):`); }
+    if (state.step === 'channel_edit_name') { state.name=safeTruncate(text,80); state.step='channel_edit_id'; return ctx.reply(`🆔 Current ID: ${state.channel.channelId||''}\n\nনতুন Channel ID দিন (না বদলালে আগেরটাই লিখুন):`); }
     if (state.step === 'channel_edit_id') { state.channelId=text; state.step='channel_edit_link'; return ctx.reply(`🔗 Current Link: ${state.channel.link||'(none)'}\n\nনতুন link দিন, না থাকলে skip:`); }
     if (state.step === 'channel_edit_link') { state.link=text.toLowerCase()==='skip'?'':text; await db.collection('channels').doc(state.channelDocId).update({name:state.name,channelId:state.channelId,link:state.link,updatedAt:Date.now()}); delete postData[userId]; return ctx.reply('✅ Channel updated.',Markup.inlineKeyboard([[Markup.button.callback('📢 Channel Manager','adm_channels')]])); }
-    if (state.step === 'button_name') { state.name=text.slice(0,60); state.step='button_url'; return ctx.reply('🔗 Button Link দিন।\n\nVideo button হলে: {VIDEO_LINK}\nHelp Admin হলে: {HELP_LINK}\nঅন্য link হলে সরাসরি https://... দিন।'); }
+    if (state.step === 'button_name') { state.name=safeTruncate(text,60); state.step='button_url'; return ctx.reply('🔗 Button Link দিন।\n\nVideo button হলে: {VIDEO_LINK}\nHelp Admin হলে: {HELP_LINK}\nঅন্য link হলে সরাসরি https://... দিন।'); }
     if (state.step === 'button_url') { if(text!=='{VIDEO_LINK}'&&text!=='{HELP_LINK}'&&!/^https?:\/\//i.test(text)) return ctx.reply('❌ সঠিক https:// link বা {VIDEO_LINK}/{HELP_LINK} দিন।'); const bs=await getPostButtons(); bs.push({name:state.name,url:text}); await savePostButtons(bs); delete postData[userId]; return ctx.reply('✅ Button saved. নতুন post-এ automatic থাকবে।'); }
-    if (state.step === 'button_edit_name') { state.name=text.slice(0,60); state.step='button_edit_url'; return ctx.reply('🔗 নতুন Button Link দিন।\n{VIDEO_LINK}, {HELP_LINK} অথবা https://...'); }
+    if (state.step === 'button_edit_name') { state.name=safeTruncate(text,60); state.step='button_edit_url'; return ctx.reply('🔗 নতুন Button Link দিন।\n{VIDEO_LINK}, {HELP_LINK} অথবা https://...'); }
     if (state.step === 'button_edit_url') { if(text!=='{VIDEO_LINK}'&&text!=='{HELP_LINK}'&&!/^https?:\/\//i.test(text)) return ctx.reply('❌ সঠিক link দিন।'); const bs=await getPostButtons(); if(!bs[state.buttonIndex]) return ctx.reply('❌ Button পাওয়া যায়নি।'); bs[state.buttonIndex]={name:state.name,url:text}; await savePostButtons(bs); delete postData[userId]; return ctx.reply('✅ Button updated.'); }
 
     if (state.step === 'setlink') {
@@ -3180,7 +3205,7 @@ bot.on('text', async (ctx) => {
         const isBlocked = user.blocked === true;
         message += `${index + 1}. ${displayName}${isBlocked ? ' 🚫' : ''}\n   👤 ${username}\n   🆔 <code>${escapeHtml(user.userId)}</code> ${status}\n\n`;
         blockRows.push([Markup.button.callback(
-          `${isBlocked ? '✅ Unblock' : '🚫 Block'} ${(fullName || user.userId)}`.slice(0, 40),
+          safeTruncate(`${isBlocked ? '✅ Unblock' : '🚫 Block'} ${(fullName || user.userId)}`, 40),
           `ublk:${user.userId}`
         )]);
       });
@@ -3198,7 +3223,7 @@ bot.on('text', async (ctx) => {
       const results = await searchTopics(text);
       if (!results.length) return ctx.reply('📭 এই নামে/ID-তে কোনো Topic পাওয়া যায়নি।');
       const rows = results.map(t => {
-        const label = `📌 ${String(t.title || 'নামবিহীন').slice(0, 40)} (${Number(t.videoCount || (Array.isArray(t.videos) ? t.videos.length : 0)) || 0} 📹)`;
+        const label = `📌 ${safeTruncate(t.title || 'নামবিহীন', 40)} (${Number(t.videoCount || (Array.isArray(t.videos) ? t.videos.length : 0)) || 0} 📹)`;
         return [Markup.button.callback(label, 'aview:' + t.id)];
       });
       return ctx.reply(`🔍 ফলাফল (${results.length}টি):`, Markup.inlineKeyboard(rows));
@@ -4083,7 +4108,17 @@ cron.schedule('0 0 * * *', async () => {
 // 🧹 CLEANUP CRON (light: every 2 minutes)
 // =============================================
 
-cron.schedule('*/2 * * * *', async () => {
+// 🐛 FIX (repeat-unlock bug): a topic's ad-watch progress (adProgress[topicId])
+// used to stay pinned at `adsRequired` forever once a user first unlocked it —
+// cleanup only ever cleared `unlockedTopics`/`topicUnlockTime`, never the
+// progress counter. So the very next time that user "unlocked" the same
+// topic (even after the 30-min access window had fully expired), the
+// transaction in /api/ad-complete saw progress already sitting at
+// `adsRequired`, and unlocked them again after just the ONE ad they'd just
+// watched to make that call — instead of requiring the full ad count again.
+// Now, whenever cleanup expires a topic out of unlockedTopics, we also wipe
+// its adProgress entry so a future watch has to earn the full unlock again.
+async function runCleanupPass() {
   if (cleanupRunning) {
     console.log('⏭️ Cleanup already running; skipping this cycle.');
     return;
@@ -4093,71 +4128,102 @@ cron.schedule('*/2 * * * *', async () => {
     const now = Date.now();
     console.log('🔄 Running cleanup check...');
 
-    const snapshot = await db.collection('users')
-      .where('cleanupDueAt', '<=', now)
-      .limit(200)
-      .get();
+    let totalDeleted = 0;
+    let totalUpdated = 0;
+    let totalDue = 0;
+    // Loop in pages: if the server was asleep/down for a while (common on
+    // Render's free tier, which spins the dyno down after inactivity), many
+    // users can pile up past their cleanupDueAt before the next request
+    // wakes it back up. A single 200-doc pass could leave a big backlog
+    // undeleted for another 2+ minutes (or longer); keep paging until we're
+    // caught up, with a sane upper bound so one run can't loop forever.
+    for (let page = 0; page < 25; page++) {
+      const snapshot = await db.collection('users')
+        .where('cleanupDueAt', '<=', now)
+        .limit(200)
+        .get();
 
-    let deletedCount = 0;
-    let updatedUsers = 0;
+      if (snapshot.empty) break;
+      totalDue += snapshot.size;
 
-    for (const doc of snapshot.docs) {
-      const data = doc.data();
-      const sentMessages = Array.isArray(data.sentMessages) ? data.sentMessages : [];
-      const remainingMessages = [];
-      let hadExpired = false;
-      let retryNeeded = false;
+      for (const doc of snapshot.docs) {
+        const data = doc.data();
+        const sentMessages = Array.isArray(data.sentMessages) ? data.sentMessages : [];
+        const remainingMessages = [];
+        let hadExpired = false;
+        let retryNeeded = false;
 
-      for (const msg of sentMessages) {
-        const sentAt = Number(msg && msg.sentAt) || 0;
-        if (!sentAt || (now - sentAt) < THIRTY_MINUTES) {
-          if (sentAt) remainingMessages.push(msg);
-          continue;
+        for (const msg of sentMessages) {
+          const sentAt = Number(msg && msg.sentAt) || 0;
+          if (!sentAt || (now - sentAt) < THIRTY_MINUTES) {
+            if (sentAt) remainingMessages.push(msg);
+            continue;
+          }
+          hadExpired = true;
+          const ok = await safeDeleteMessage(msg.chatId, msg.messageId);
+          if (ok) totalDeleted++;
+          else {
+            // Blocked user হলে retry করা অর্থহীন, তাই drop করি
+            if (isBlockedError({ message: 'blocked by the user' })) continue;
+            retryNeeded = true;
+            remainingMessages.push(msg);
+          }
         }
-        hadExpired = true;
-        const ok = await safeDeleteMessage(msg.chatId, msg.messageId);
-        if (ok) deletedCount++;
-        else {
-          // Blocked user হলে retry করা অর্থহীন, তাই drop করি
-          if (isBlockedError({ message: 'blocked by the user' })) continue;
-          retryNeeded = true;
-          remainingMessages.push(msg);
+
+        const unlockedTopics = Array.isArray(data.unlockedTopics) ? data.unlockedTopics : [];
+        const topicUnlockTime = data.topicUnlockTime || {};
+        const stillUnlocked = unlockedTopics.filter(topicId => {
+          const time = Number(topicUnlockTime[topicId]) || 0;
+          return time && (now - time) < THIRTY_MINUTES;
+        });
+        const expiredTopics = unlockedTopics.filter(t => !stillUnlocked.includes(t));
+
+        let nextCleanupAt = null;
+        if (retryNeeded) nextCleanupAt = now + 2 * 60 * 1000;
+        else nextCleanupAt = getCleanupDueAt(remainingMessages);
+
+        const updates = { cleanupDueAt: nextCleanupAt || null };
+        if (hadExpired || remainingMessages.length !== sentMessages.length) {
+          updates.sentMessages = remainingMessages;
+        }
+        if (stillUnlocked.length !== unlockedTopics.length) {
+          updates.unlockedTopics = stillUnlocked;
+        }
+        if (expiredTopics.length) {
+          // Clear the unlock time entries and reset ad progress for topics
+          // that just expired, so a future watch requires the full ad count
+          // again instead of being fast-tracked by stale leftover progress.
+          const newTopicUnlockTime = { ...topicUnlockTime };
+          const newAdProgress = { ...(data.adProgress || {}) };
+          for (const t of expiredTopics) {
+            delete newTopicUnlockTime[t];
+            delete newAdProgress[t];
+          }
+          updates.topicUnlockTime = newTopicUnlockTime;
+          updates.adProgress = newAdProgress;
+        }
+
+        if (Object.keys(updates).length > 1 || Number(data.cleanupDueAt) !== Number(updates.cleanupDueAt)) {
+          await doc.ref.set(updates, { merge: true });
+          totalUpdated++;
         }
       }
 
-      const unlockedTopics = Array.isArray(data.unlockedTopics) ? data.unlockedTopics : [];
-      const topicUnlockTime = data.topicUnlockTime || {};
-      const stillUnlocked = unlockedTopics.filter(topicId => {
-        const time = Number(topicUnlockTime[topicId]) || 0;
-        return time && (now - time) < THIRTY_MINUTES;
-      });
-
-      let nextCleanupAt = null;
-      if (retryNeeded) nextCleanupAt = now + 2 * 60 * 1000;
-      else nextCleanupAt = getCleanupDueAt(remainingMessages);
-
-      const updates = { cleanupDueAt: nextCleanupAt || null };
-      if (hadExpired || remainingMessages.length !== sentMessages.length) {
-        updates.sentMessages = remainingMessages;
-      }
-      if (stillUnlocked.length !== unlockedTopics.length) {
-        updates.unlockedTopics = stillUnlocked;
-      }
-
-      if (Object.keys(updates).length > 1 || Number(data.cleanupDueAt) !== Number(updates.cleanupDueAt)) {
-        await doc.ref.set(updates, { merge: true });
-        updatedUsers++;
-      }
+      if (snapshot.size < 200) break; // caught up
     }
 
-    if (deletedCount > 0 || updatedUsers > 0 || snapshot.size > 0) {
-      console.log(`✅ Cleanup: ${deletedCount} videos deleted, ${updatedUsers} users processed, ${snapshot.size} due users`);
+    if (totalDeleted > 0 || totalUpdated > 0 || totalDue > 0) {
+      console.log(`✅ Cleanup: ${totalDeleted} videos deleted, ${totalUpdated} users processed, ${totalDue} due users`);
     }
   } catch (error) {
     console.error('❌ Cron error:', error);
   } finally {
     cleanupRunning = false;
   }
+}
+
+cron.schedule('*/2 * * * *', () => {
+  runCleanupPass().catch(e => console.error('❌ Cleanup pass error:', e.message));
 });
 
 // =============================================
@@ -4225,6 +4291,14 @@ bot.launch({
     console.log('🤖 Bot started successfully (polling mode)');
     // Migration একবার চালাই
     migrateCleanupSchedule().catch(() => {});
+    // 🐛 FIX (delayed cleanup bug): Render's free tier spins the server down
+    // after ~15 min idle. While asleep, node-cron can't fire — so any video
+    // due for deletion just sits there until the next incoming request
+    // happens to wake the dyno back up AND the next */2-minute tick lands.
+    // That gap explained videos still sitting undeleted an hour+ after
+    // their 30-minute window. Run one cleanup pass immediately on every
+    // boot/wake so a sleep period never leaves a backlog waiting on a timer.
+    runCleanupPass().catch(e => console.error('❌ Startup cleanup pass error:', e.message));
   })
   .catch(err => {
     console.error('❌ Bot start error:', err.message);
