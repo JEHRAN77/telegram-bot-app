@@ -571,7 +571,7 @@ function startAds(topic,button){
     document.getElementById('adTimer').textContent='•••';
 
     function handleResult(result){
-      if(result && result.done===false){resetAd('Ad was not completed');return}
+      if(result && result.done===false){resetAd('⚠️ Ad সম্পূর্ণ দেখা হয়নি, তাই এটা count হয়নি। আবার চেষ্টা করুন।');return}
       adCompleted=true;recordAd(button);
     }
 
@@ -583,10 +583,10 @@ function startAds(topic,button){
         // silently retry with the other network instead.
         var fallback=network==='adsgram'?'monetag':'adsgram';
         showNetworkAd(fallback).then(handleResult).catch(function(e2){
-          console.error(e2);resetAd('Ad failed');
+          console.error(e2);resetAd('⚠️ এই মুহূর্তে কোনো Ad পাওয়া যায়নি। একটু পর আবার চেষ্টা করুন।');
         });
       });
-    }catch(e){console.error(e);resetAd('Ad failed')}
+    }catch(e){console.error(e);resetAd('⚠️ এই মুহূর্তে কোনো Ad পাওয়া যায়নি। একটু পর আবার চেষ্টা করুন।')}
   }).catch(function(e){console.error(e);resetAd('Ad শুরু করা যায়নি')});
 }
 
@@ -611,8 +611,25 @@ async function recordAd(button){
     if(!r.ok||!data.success)throw new Error(data.error||'failed');
     if(data.requiresStart && data.startUrl){
       isWatching=false;
-      if(tg && tg.openTelegramLink) tg.openTelegramLink(data.startUrl);
-      else window.location.href=data.startUrl;
+      // Update the button + refresh unlocked state FIRST — if the redirect
+      // below doesn't actually leave the Mini App (this can silently do
+      // nothing on Telegram when the Mini App was opened from inside the bot
+      // itself, rather than from a channel post — same chat, so there's
+      // nothing to "switch" to), the user should still see "CONTENT
+      // UNLOCKED" instead of being stuck on "Preparing Ad…" forever.
+      if(button)button.textContent='CONTENT UNLOCKED';
+      loadUnlocked();
+      if(tg && tg.openTelegramLink){
+        tg.openTelegramLink(data.startUrl);
+        // Force the Mini App itself to close so Telegram is forced to bring
+        // the bot chat to the front — this is what actually triggers the
+        // "new message" notification. openTelegramLink alone can silently
+        // no-op when the target is the same chat the Mini App was launched
+        // from (i.e. opened via the bot's own Menu Button).
+        if(tg.close) setTimeout(function(){tg.close()},300);
+      } else {
+        window.location.href=data.startUrl;
+      }
       return;
     }
     adCount=Number(data.count)||0;
@@ -627,13 +644,19 @@ async function recordAd(button){
     setTimeout(function(){if(currentTopic&&!unlocked[currentTopic.id])startAds(currentTopic,button)},500);
   }catch(e){
     console.error('Ad completion error',e);
-    resetAd('Server error');
+    // Surface the server's own reason (e.g. "সম্পূর্ণ দেখা হয়নি" from the
+    // 14s minimum-duration check) instead of a generic message, so the user
+    // actually understands why the ad didn't count.
+    resetAd(e && e.message && e.message!=='failed' ? '⚠️ '+e.message : '⚠️ Ad সম্পূর্ণ হয়নি বা সার্ভারে সমস্যা হয়েছে। আবার চেষ্টা করুন।');
   }
 }
 
-function resetAd(){
+function resetAd(message){
   document.getElementById('ad-overlay').classList.remove('show');
   isWatching=false;adCompleted=false;
+  if(message){
+    if(tg&&tg.showAlert)tg.showAlert(message);else alert(message);
+  }
   if(currentTopic){
     var b=document.getElementById('singleUnlock');
     if(b&&!unlocked[currentTopic.id]&&!dailyLimitReached){

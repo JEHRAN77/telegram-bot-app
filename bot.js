@@ -14,27 +14,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// ✅ Emoji/multi-byte-safe truncate + sanitize.
-// Two related problems, both giving Telegram's
-// "400: inline keyboard button text must be encoded in UTF-8" error:
-//  1) Plain String.slice() cuts by UTF-16 code units, so it can chop an
-//     emoji's surrogate pair in half, creating a broken "lone surrogate"
-//     character.
-//  2) A lone surrogate can already be sitting inside a stored channel name
-//     or post caption in Firestore — e.g. saved back when problem #1 above
-//     was still happening — and simply truncating it more carefully doesn't
-//     remove damage that's already baked into the stored string.
-// This helper fixes both: it strips any unpaired surrogate first, then
-// truncates by whole characters (not raw UTF-16 units).
-function safeTruncate(str, maxLen) {
-  const cleaned = String(str || '').replace(
-    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
-    ''
-  );
-  const chars = Array.from(cleaned);
-  return chars.length > maxLen ? chars.slice(0, maxLen).join('') : chars.join('');
-}
-
 // 🚫 NEVER process posts coming from Telegram channels.
 // The bot should only process user/private/group updates. This guard is the
 // final protection against Public Posting Channel media being copied to
@@ -338,7 +317,7 @@ function invalidateDailyLimitCache() { dailyLimitCacheAt = 0; }
 // the endpoint instantly cannot fake that elapsed time).
 const adTokens = new Map(); // token -> { userId, topicId, createdAt }
 const AD_TOKEN_TTL_MS = 5 * 60 * 1000;      // tokens expire after 5 minutes unused
-const MIN_AD_DURATION_MS = 8 * 1000;        // an ad can't realistically finish in under 8s
+const MIN_AD_DURATION_MS = 10 * 1000;       // safety margin below the ~15s ad length — blocks obvious instant/skip abuse without risking false-rejecting a real viewer (slow network, ad render delay, or a slightly shorter creative)
 function cleanupAdTokens() {
   const now = Date.now();
   for (const [token, data] of adTokens.entries()) {
@@ -690,7 +669,7 @@ async function renderChannelPicker(ctx) {
   const rows = active.map(c => {
     const key = c.id || c.channelId;
     const checked = state.selected.has(key) ? '✅' : '⬜';
-    return [Markup.button.callback(`${checked} ${safeTruncate(c.name || c.channelId, 35)}`, 'pch_toggle:' + key)];
+    return [Markup.button.callback(`${checked} ${String(c.name || c.channelId).slice(0, 35)}`, 'pch_toggle:' + key)];
   });
   if (!rows.length && POST_CHANNEL) {
     const checked = state.selected.has(POST_CHANNEL) ? '✅' : '⬜';
@@ -1537,26 +1516,7 @@ async function getRepostPostsForChannel(channelId) {
       });
     });
 
-  // Reposting a video-linked post creates a brand-new Telegram message (new
-  // messageId), so it was being stored as a second, separate entry — the same
-  // video showing up "duplicated" in the list every time it's reposted. Here
-  // we collapse those down to just the latest copy per Topic/Video per
-  // channel. Posts with no linked Topic (forwarded ones, topicId === 'repost')
-  // aren't clustered — they're genuinely separate pieces of content, so each
-  // stays listed on its own.
-  const all = Array.from(map.values());
-  const latestByTopic = new Map();
-  const standalone = [];
-  all.forEach(r => {
-    const tid = (r.topicId && r.topicId !== 'repost') ? String(r.topicId) : null;
-    if (!tid) { standalone.push(r); return; }
-    const existing = latestByTopic.get(tid);
-    if (!existing || (Number(r.postedAt) || 0) > (Number(existing.postedAt) || 0)) {
-      latestByTopic.set(tid, r);
-    }
-  });
-
-  return [...latestByTopic.values(), ...standalone]
+  return Array.from(map.values())
     .sort((a,b) => (Number(b.postedAt)||0) - (Number(a.postedAt)||0));
 }
 
@@ -1850,7 +1810,7 @@ async function renderBulkTopicsPanel(ctx) {
 
   const rows = pageTopics.map(t => {
     const checked = bulkSelect.ids.has(t.id) ? '✅' : '⬜';
-    const title = safeTruncate(t.title || 'নামবিহীন', 30);
+    const title = String(t.title || 'নামবিহীন').slice(0, 30);
     const ads = Number(t.adsRequired || 0) || 0;
     return [Markup.button.callback(`${checked} ${title} (${ads} ads)`, `blk:${t.id}`)];
   });
@@ -1953,7 +1913,7 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
   }
   if (action === 'channels') {
     const channels = await getChannels();
-    const rows = channels.map(ch => [Markup.button.callback(`${ch.active === false ? '🔴' : '🟢'} ${safeTruncate(ch.name||ch.channelId, 35)}`, `ach_view:${ch.id || ch.channelId}`)]);
+    const rows = channels.map(ch => [Markup.button.callback(`${ch.active === false ? '🔴' : '🟢'} ${String(ch.name||ch.channelId).slice(0,35)}`, `ach_view:${ch.id || ch.channelId}`)]);
     rows.push([Markup.button.callback('➕ Add Channel', 'ach_add')]);
     rows.push([Markup.button.callback('⬅️ Back', 'adm_home')]);
     return ctx.editMessageText('📢 CHANNEL MANAGER\n\nএকটি Channel নির্বাচন করুন:', Markup.inlineKeyboard(rows));
@@ -1978,7 +1938,7 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
     // looks up by), not the filtered/active-only list — otherwise once any
     // channel is inactive, every button after it points at the wrong channel.
     const rows = channels
-      .map((ch, i) => (ch.active === false ? null : [Markup.button.callback(`📢 ${safeTruncate(ch.name||ch.channelId, 35)}`, `repost_channel:${i}`)]))
+      .map((ch, i) => (ch.active === false ? null : [Markup.button.callback(`📢 ${String(ch.name||ch.channelId).slice(0,35)}`, `repost_channel:${i}`)]))
       .filter(Boolean);
     if (!rows.length && POST_CHANNEL) rows.push([Markup.button.callback('📢 Posting Channel', `repost_channel:default`)]);
     rows.push([Markup.button.callback('📥 Forward করে যোগ করুন', 'adm_repost_forward')]);
@@ -2062,19 +2022,13 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
       if (snap.empty) {
         return ctx.editMessageText('📭 কোনো Scheduled Post নেই।', Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'adm_home')]]));
       }
-      // Look up each Topic's title so the list shows a recognizable name
-      // instead of just a bare ID — otherwise every entry looks identical.
-      const topicsForLookup = await getTopicsCached();
-      const topicTitleById = new Map(topicsForLookup.map(t => [String(t.id), t.title || 'নামবিহীন']));
       const rows = [];
       let text = '🕒 SCHEDULED POSTS\n\n';
       snap.docs.forEach((d, i) => {
         const sp = d.data();
         const repeatTag = sp.recurrence === 'daily' ? ' 🔁Daily' : sp.recurrence === 'weekly' ? ' 🔁Weekly' : '';
-        const topicTitle = safeTruncate(topicTitleById.get(String(sp.topicId)) || '', 40);
-        const topicLabel = topicTitle ? `${topicTitle} (🆔 ${sp.topicId})` : `🆔 ${sp.topicId}`;
-        text += `${i + 1}. 📌 ${topicLabel} | 📅 ${formatDhakaDateTime(sp.scheduledAt)}${repeatTag} | 📢 ${(sp.channels || []).length}টি Channel\n`;
-        rows.push([Markup.button.callback(`❌ Cancel #${i + 1}: ${safeTruncate(topicTitle || sp.topicId, 30)}`, `schedcancel:${d.id}`)]);
+        text += `${i + 1}. 🆔 Topic: ${sp.topicId} | 📅 ${formatDhakaDateTime(sp.scheduledAt)}${repeatTag} | 📢 ${(sp.channels || []).length}টি Channel\n`;
+        rows.push([Markup.button.callback(`❌ Cancel #${i + 1}`, `schedcancel:${d.id}`)]);
       });
       rows.push([Markup.button.callback('⬅️ Back', 'adm_home')]);
       return ctx.editMessageText(text, Markup.inlineKeyboard(rows));
@@ -2114,7 +2068,7 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
   if (action === 'buttons') {
     const bs=await getPostButtons();
     const rows=bs.map((b,i)=>[
-      Markup.button.callback(`${i+1}. ${safeTruncate(b.name, 20)}`,'ab_edit:'+i),
+      Markup.button.callback(`${i+1}. ${String(b.name).slice(0,20)}`,'ab_edit:'+i),
       Markup.button.callback(i===0?'　':'⬆️','ab_up:'+i),
       Markup.button.callback(i===bs.length-1?'　':'⬇️','ab_down:'+i),
       Markup.button.callback('🗑️','ab_del:'+i)
@@ -2235,10 +2189,7 @@ function renderRepostPage(ctx, userId, page) {
     const caption = String(p.caption || p.title || '(Caption নেই)').replace(/\s+/g, ' ').trim();
     const media = p.type === 'photo' ? '🖼️' : '🎬';
     const date = p.postedAt ? new Date(Number(p.postedAt)).toLocaleDateString('en-GB') : '';
-    // Show the linked Video/Topic ID (when there is one) so posts with similar
-    // or generic captions can still be told apart at a glance.
-    const topicTag = (p.topicId && p.topicId !== 'repost') ? ` 🆔${p.topicId}` : '';
-    return [Markup.button.callback(`${media} ${safeTruncate(caption, 40)}${topicTag}${date ? ` • ${date}` : ''}`, `repost_post:${globalIndex}`)];
+    return [Markup.button.callback(`${media} ${caption.slice(0, 48)}${date ? ` • ${date}` : ''}`, `repost_post:${globalIndex}`)];
   });
 
   const navRow = [];
@@ -2268,16 +2219,8 @@ bot.action(/^repost_post:(\d+)$/, async ctx => {
   await ctx.answerCbQuery();
   const date = rec.postedAt ? new Date(Number(rec.postedAt)).toLocaleDateString('en-GB') : 'অজানা';
   const media = rec.type === 'photo' ? '🖼️ Photo' : '🎬 Video';
-  // Resolve the linked Video/Topic's title, if any, so the preview clearly
-  // confirms WHICH video is about to be reposted — not just a raw ID.
-  let topicLine = '';
-  if (rec.topicId && rec.topicId !== 'repost') {
-    const topicsForLookup = await getTopicsCached();
-    const t = topicsForLookup.find(x => String(x.id) === String(rec.topicId));
-    topicLine = `\n🎬 Video/Topic: ${t ? safeTruncate(t.title || 'নামবিহীন', 60) : 'পাওয়া যায়নি'} (🆔 ${rec.topicId})`;
-  }
   return ctx.editMessageText(
-    `⚠️ Repost Preview — ঠিক আছে তো?\n\n📢 Channel: ${rec.channelId}\n📦 Type: ${media}\n📅 আগে posted: ${date}${topicLine}\n📝 Caption:\n${String(rec.caption || rec.title || '(Caption নেই)').slice(0, 400)}`,
+    `⚠️ Repost Preview — ঠিক আছে তো?\n\n📢 Channel: ${rec.channelId}\n📦 Type: ${media}\n📅 আগে posted: ${date}\n📝 Caption:\n${String(rec.caption || rec.title || '(Caption নেই)').slice(0, 400)}`,
     Markup.inlineKeyboard([
       [Markup.button.callback('✅ হ্যাঁ, Repost করুন', 'repost_confirm:'+index), Markup.button.callback('❌ বাতিল', 'adm_repost')]
     ])
@@ -2373,7 +2316,7 @@ bot.action(/^ab_del:(\d+)$/, async ctx=>{ if(!adminOnly(ctx))return ctx.answerCb
 async function renderButtonManager(ctx) {
   const bs = await getPostButtons();
   const rows = bs.map((b, i) => [
-    Markup.button.callback(`${i + 1}. ${safeTruncate(b.name, 20)}`, 'ab_edit:' + i),
+    Markup.button.callback(`${i + 1}. ${String(b.name).slice(0, 20)}`, 'ab_edit:' + i),
     Markup.button.callback(i === 0 ? '　' : '⬆️', 'ab_up:' + i),
     Markup.button.callback(i === bs.length - 1 ? '　' : '⬇️', 'ab_down:' + i),
     Markup.button.callback('🗑️', 'ab_del:' + i)
@@ -3145,7 +3088,7 @@ bot.on('text', async (ctx) => {
         const isBlocked = user.blocked === true;
         message += `${index + 1}. ${displayName}${isBlocked ? ' 🚫' : ''}\n   👤 ${username}\n   🆔 <code>${escapeHtml(user.userId)}</code> ${status}\n\n`;
         blockRows.push([Markup.button.callback(
-          safeTruncate(`${isBlocked ? '✅ Unblock' : '🚫 Block'} ${(fullName || user.userId)}`, 40),
+          `${isBlocked ? '✅ Unblock' : '🚫 Block'} ${(fullName || user.userId)}`.slice(0, 40),
           `ublk:${user.userId}`
         )]);
       });
@@ -3163,7 +3106,7 @@ bot.on('text', async (ctx) => {
       const results = await searchTopics(text);
       if (!results.length) return ctx.reply('📭 এই নামে/ID-তে কোনো Topic পাওয়া যায়নি।');
       const rows = results.map(t => {
-        const label = `📌 ${safeTruncate(t.title || 'নামবিহীন', 40)} (${Number(t.videoCount || (Array.isArray(t.videos) ? t.videos.length : 0)) || 0} 📹)`;
+        const label = `📌 ${String(t.title || 'নামবিহীন').slice(0, 40)} (${Number(t.videoCount || (Array.isArray(t.videos) ? t.videos.length : 0)) || 0} 📹)`;
         return [Markup.button.callback(label, 'aview:' + t.id)];
       });
       return ctx.reply(`🔍 ফলাফল (${results.length}টি):`, Markup.inlineKeyboard(rows));
