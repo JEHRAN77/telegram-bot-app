@@ -2023,47 +2023,7 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
     }
   }
   if (action === 'scheduled') {
-    try {
-      const snap = await db.collection('scheduledPosts')
-        .where('status', '==', 'pending')
-        .orderBy('scheduledAt', 'asc')
-        .limit(20)
-        .get();
-      if (snap.empty) {
-        return ctx.editMessageText('📭 কোনো Scheduled Post নেই।', Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'adm_home')]]));
-      }
-      // 🐛 FIX: older schedules saved before `title` was stored on the doc
-      // (see post_schedule save above) won't have it — look those specific
-      // few up from the topics collection so the list is still readable
-      // instead of falling back to a bare, meaningless Topic ID.
-      const missingTitleIds = [...new Set(
-        snap.docs.map(d => d.data()).filter(sp => !sp.title && sp.topicId).map(sp => sp.topicId)
-      )];
-      const fallbackTitles = {};
-      if (missingTitleIds.length) {
-        await Promise.all(missingTitleIds.map(async id => {
-          try {
-            const t = await db.collection('topics').doc(id).get();
-            fallbackTitles[id] = t.exists ? (t.data().title || 'নামবিহীন ভিডিও') : '❓ Topic পাওয়া যায়নি';
-          } catch (e) { fallbackTitles[id] = '❓ Topic পাওয়া যায়নি'; }
-        }));
-      }
-
-      const rows = [];
-      let text = '🕒 SCHEDULED POSTS\n\n';
-      snap.docs.forEach((d, i) => {
-        const sp = d.data();
-        const repeatTag = sp.recurrence === 'daily' ? ' 🔁Daily' : sp.recurrence === 'weekly' ? ' 🔁Weekly' : '';
-        const title = sp.title || fallbackTitles[sp.topicId] || 'নামবিহীন ভিডিও';
-        text += `${i + 1}. 📌 ${title} (🆔 ${sp.topicId}) | 📅 ${formatDhakaDateTime(sp.scheduledAt)}${repeatTag} | 📢 ${(sp.channels || []).length}টি Channel\n`;
-        rows.push([Markup.button.callback(`❌ Cancel #${i + 1}`, `schedcancel:${d.id}`)]);
-      });
-      rows.push([Markup.button.callback('⬅️ Back', 'adm_home')]);
-      return ctx.editMessageText(text, Markup.inlineKeyboard(rows));
-    } catch (error) {
-      console.error('❌ Scheduled list error:', error.message);
-      return ctx.reply('❌ তালিকা আনতে সমস্যা হয়েছে: ' + error.message + '\n\n(Firestore-এ একটা composite index লাগতে পারে — Render/console log-এ যে link আসবে সেটায় ক্লিক করলেই index তৈরি হয়ে যাবে।)');
-    }
+    return renderScheduledPostsList(ctx);
   }
   if (action === 'bulk_topics') { return renderBulkTopicsPanel(ctx); }
   if (action === 'bulk_cancel') {
@@ -2583,6 +2543,109 @@ bot.action(/^blkpage:(prev|next)$/, async (ctx) => {
   return renderBulkTopicsPanel(ctx);
 });
 
+// Shows the pending Scheduled Posts list, each with its own Cancel button
+// labelled with the topic's TITLE (not just a bare, meaningless #N) — see
+// post_schedule save above for where the title gets stored. Tapping Cancel
+// asks for confirmation (schedcancel_ask below) instead of cancelling
+// immediately, so an admin can't lose a schedule to a stray tap.
+async function renderScheduledPostsList(ctx) {
+  try {
+    const snap = await db.collection('scheduledPosts')
+      .where('status', '==', 'pending')
+      .orderBy('scheduledAt', 'asc')
+      .limit(20)
+      .get();
+    if (snap.empty) {
+      return ctx.editMessageText('📭 কোনো Scheduled Post নেই।', Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'adm_home')]]));
+    }
+    // Older schedules saved before `title` was stored on the doc won't have
+    // it — look those specific few up from the topics collection so the
+    // list (and its buttons) are still readable instead of showing a bare,
+    // meaningless Topic ID.
+    const missingTitleIds = [...new Set(
+      snap.docs.map(d => d.data()).filter(sp => !sp.title && sp.topicId).map(sp => sp.topicId)
+    )];
+    const fallbackTitles = {};
+    if (missingTitleIds.length) {
+      await Promise.all(missingTitleIds.map(async id => {
+        try {
+          const t = await db.collection('topics').doc(id).get();
+          fallbackTitles[id] = t.exists ? (t.data().title || 'নামবিহীন ভিডিও') : '❓ Topic পাওয়া যায়নি';
+        } catch (e) { fallbackTitles[id] = '❓ Topic পাওয়া যায়নি'; }
+      }));
+    }
+
+    const rows = [];
+    let text = '🕒 SCHEDULED POSTS\n\n';
+    snap.docs.forEach((d, i) => {
+      const sp = d.data();
+      const repeatTag = sp.recurrence === 'daily' ? ' 🔁Daily' : sp.recurrence === 'weekly' ? ' 🔁Weekly' : '';
+      const title = sp.title || fallbackTitles[sp.topicId] || 'নামবিহীন ভিডিও';
+      text += `${i + 1}. 📌 ${title} (🆔 ${sp.topicId}) | 📅 ${formatDhakaDateTime(sp.scheduledAt)}${repeatTag} | 📢 ${(sp.channels || []).length}টি Channel\n`;
+      const shortTitle = title.length > 26 ? title.slice(0, 26) + '…' : title;
+      rows.push([Markup.button.callback(`❌ Cancel: ${shortTitle}`, `schedcancel_ask:${d.id}`)]);
+    });
+    rows.push([Markup.button.callback('⬅️ Back', 'adm_home')]);
+    return ctx.editMessageText(text, Markup.inlineKeyboard(rows));
+  } catch (error) {
+    console.error('❌ Scheduled list error:', error.message);
+    return ctx.reply('❌ তালিকা আনতে সমস্যা হয়েছে: ' + error.message + '\n\n(Firestore-এ একটা composite index লাগতে পারে — Render/console log-এ যে link আসবে সেটায় ক্লিক করলেই index তৈরি হয়ে যাবে।)');
+  }
+}
+
+// Step 1: show what's about to be cancelled and ask for a real Yes/No
+// confirmation, instead of cancelling on the very first tap.
+bot.action(/^schedcancel_ask:(.+)$/, async (ctx) => {
+  if (!adminOnly(ctx)) return ctx.answerCbQuery('❌ অনুমতি নেই');
+  const id = ctx.match[1];
+  try { await ctx.answerCbQuery(); } catch (e) {}
+  try {
+    const doc = await db.collection('scheduledPosts').doc(id).get();
+    if (!doc.exists || doc.data().status !== 'pending') {
+      try { await ctx.answerCbQuery('❌ এই Schedule আর active নেই।'); } catch (e) {}
+      return renderScheduledPostsList(ctx);
+    }
+    const sp = doc.data();
+    const repeatTag = sp.recurrence === 'daily' ? '\n🔁 প্রতিদিন repeat হচ্ছিল' : sp.recurrence === 'weekly' ? '\n🔁 প্রতি সপ্তাহে repeat হচ্ছিল' : '';
+    return ctx.editMessageText(
+      `⚠️ আপনি কি নিশ্চিত এই Scheduled Post বাতিল করতে চান?\n\n` +
+      `📌 Title: ${sp.title || 'নামবিহীন ভিডিও'}\n` +
+      `🆔 Topic ID: ${sp.topicId}\n` +
+      `📅 সময়: ${formatDhakaDateTime(sp.scheduledAt)}${repeatTag}\n` +
+      `📢 Channel: ${(sp.channels || []).length}টি`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback('✅ হ্যাঁ, বাতিল করুন', `schedcancel_yes:${id}`)],
+        [Markup.button.callback('⬅️ না, ফিরে যান', 'adm_scheduled')]
+      ])
+    );
+  } catch (error) {
+    console.error('❌ schedcancel_ask error:', error.message);
+    return ctx.reply('❌ সমস্যা হয়েছে: ' + error.message);
+  }
+});
+
+// Step 2: only actually cancels after the admin has confirmed above.
+bot.action(/^schedcancel_yes:(.+)$/, async (ctx) => {
+  if (!adminOnly(ctx)) return ctx.answerCbQuery('❌ অনুমতি নেই');
+  const id = ctx.match[1];
+  try {
+    await db.collection('scheduledPosts').doc(id).set({ status: 'cancelled' }, { merge: true });
+    const timer = scheduledTimers.get(id);
+    if (timer) { clearTimeout(timer); scheduledTimers.delete(id); }
+    try { await ctx.answerCbQuery('✅ বাতিল হয়েছে'); } catch (e) {}
+  } catch (error) {
+    console.error('❌ schedcancel_yes error:', error.message);
+    try { await ctx.answerCbQuery('❌ সমস্যা হয়েছে'); } catch (e) {}
+    return;
+  }
+  return renderScheduledPostsList(ctx);
+});
+
+// Kept for backward compatibility with any Scheduled Posts list message
+// that was already sent/opened before this confirmation step was added
+// (its buttons still carry the old callback data) — it still cancels
+// directly with no confirmation. Every list rendered from now on uses
+// schedcancel_ask/schedcancel_yes above instead.
 bot.action(/^schedcancel:(.+)$/, async (ctx) => {
   if (!adminOnly(ctx)) return ctx.answerCbQuery('❌ অনুমতি নেই');
   const id = ctx.match[1];
