@@ -8,6 +8,7 @@
 <link rel="preload" as="image" href="/assets/premium-video-logo.webp" fetchpriority="high">
 <link rel="preconnect" href="https://api.telegram.org" crossorigin>
 <script src="//libtl.com/sdk.js" data-zone="11737734" data-sdk="show_11737734" async></script>
+<script src="https://sad.adsgram.ai/js/sad.min.js" async></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -323,13 +324,21 @@ function titleTokens(text){
   var stop={the:1,and:1,for:1,with:1,this:1,that:1,video:1,ভিডিও:1,এর:1,এবং:1,একটি:1,এই:1,ও:1};
   return String(text||'').toLowerCase().replace(/[^a-z0-9\u0980-\u09ff]+/g,' ').split(/\s+/).filter(function(x){return x.length>1&&!stop[x]});
 }
-function personalizedScore(t,index){
+function buildHistoryContext(){
+  var historyIds={}; userHistory.forEach(function(id){historyIds[String(id)]=true});
+  var pref={};
+  userHistory.forEach(function(id){
+    var ht=topics.find(function(x){return String(x.id)===String(id)});
+    if(ht) titleTokens(ht.title||'').forEach(function(tok){pref[tok]=(pref[tok]||0)+1;});
+  });
+  return {historyIds:historyIds,pref:pref};
+}
+function personalizedScore(t,index,ctx){
   var uid=userId()||'guest';
   var today=new Date().toISOString().slice(0,10);
   var active=!!unlocked[t.id];
-  var historyIds={}; userHistory.forEach(function(id){historyIds[String(id)]=true});
   var score=0;
-  if(!historyIds[String(t.id)]) score+=48; else score-=24;
+  if(!ctx.historyIds[String(t.id)]) score+=48; else score-=24;
   if(active) score-=1000;
   var age=Math.max(0,Date.now()-timeOf(t));
   if(age<24*3600000) score+=30;
@@ -337,15 +346,20 @@ function personalizedScore(t,index){
   else if(age<7*86400000) score+=6;
   score+=Math.min(22,Math.log1p(viewsOf(t))*3.2);
 
-  var historyTitles=[];
-  userHistory.forEach(function(id){
-    var ht=topics.find(function(x){return String(x.id)===String(id)});
-    if(ht) historyTitles.push(ht.title||'');
-  });
-  var pref={}; historyTitles.forEach(function(title){titleTokens(title).forEach(function(tok){pref[tok]=(pref[tok]||0)+1;});});
   var tt=titleTokens(t.title), overlap=0;
-  tt.forEach(function(tok){if(pref[tok]) overlap+=Math.min(4,pref[tok]);});
+  tt.forEach(function(tok){if(ctx.pref[tok]) overlap+=Math.min(4,ctx.pref[tok]);});
   score+=Math.min(24,overlap*6);
+
+  // Exploration boost: your quieter/under-exposed videos (below the catalog's
+  // average view count) get a real, per-user-rotating chance to land near the
+  // top too — instead of the same popular handful always winning for every
+  // single user. Seeded by user+day+topic, so it's stable for one person in
+  // one day but different users (and the next day) see different videos get
+  // the boost — spreading views across your whole library over time instead
+  // of concentrating them on a few titles forever.
+  if(viewsOf(t)<ctx.avgViews){
+    score+=seededScore(uid+'|explore|'+today+'|'+t.id)*20;
+  }
 
   // Small deterministic daily rotation prevents the All tab from feeling static.
   score+=seededScore(uid+'|'+today+'|'+t.id)*8;
@@ -364,7 +378,15 @@ function sortTopics(){
   }else if(activeCategory==='new'){
     a.sort(function(x,y){return timeOf(y)-timeOf(x)}); a=a.slice(0,20);
   }else{
-    a.sort(function(x,y){return personalizedScore(y,a.indexOf(y))-personalizedScore(x,a.indexOf(x));});
+    // Score every topic exactly once (was previously recomputed from scratch
+    // — including a full re-scan of watch history — inside the sort
+    // comparator itself, on every single comparison; that got noticeably
+    // slower as the video library and a user's history both grew).
+    var ctx=buildHistoryContext();
+    ctx.avgViews=a.length?a.reduce(function(s,x){return s+viewsOf(x)},0)/a.length:0;
+    var scored=a.map(function(t,i){return {t:t,s:personalizedScore(t,i,ctx)}});
+    scored.sort(function(x,y){return y.s-x.s});
+    a=scored.map(function(x){return x.t});
   }
   return a;
 }
@@ -499,6 +521,33 @@ function loadHome(){
     });
 }
 
+// AdsGram not approved yet — once you get a real Block ID from the AdsGram
+// dashboard, paste it here. Until then showNetworkAd() below will just fall
+// back to Monetag automatically, so nothing breaks in the meantime.
+var ADSGRAM_BLOCK_ID='REPLACE_WITH_YOUR_ADSGRAM_BLOCK_ID';
+var adsgramController=null;
+function getAdsgramController(){
+  if(adsgramController) return adsgramController;
+  if(window.Adsgram && ADSGRAM_BLOCK_ID && ADSGRAM_BLOCK_ID.indexOf('REPLACE')!==0){
+    adsgramController=window.Adsgram.init({blockId:ADSGRAM_BLOCK_ID});
+  }
+  return adsgramController;
+}
+// Alternates ad networks per ad watched: 1st = Monetag, 2nd = AdsGram, 3rd = Monetag...
+function pickAdNetwork(){
+  return (adCount%2===0)?'monetag':'adsgram';
+}
+function showNetworkAd(network){
+  if(network==='adsgram'){
+    var ctrl=getAdsgramController();
+    if(!ctrl) return Promise.reject(new Error('AdsGram not ready'));
+    return ctrl.show();
+  }
+  var adFn=window.show_11737734;
+  if(typeof adFn!=='function') return Promise.reject(new Error('Monetag not ready'));
+  return Promise.resolve(adFn());
+}
+
 function startAds(topic,button){
   if(isWatching) return;
   if(dailyLimitReached) return;
@@ -518,16 +567,22 @@ function startAds(topic,button){
     overlay.classList.add('show');
     document.getElementById('adTimer').textContent='•••';
 
-    var adFn=window.show_11737734;
-    if(typeof adFn!=='function'){
-      resetAd('Ad is not ready');
-      return;
+    function handleResult(result){
+      if(result && result.done===false){resetAd('Ad was not completed');return}
+      adCompleted=true;recordAd(button);
     }
+
+    var network=pickAdNetwork();
     try{
-      Promise.resolve(adFn()).then(function(result){
-        if(result && result.done===false){resetAd('Ad was not completed');return}
-        adCompleted=true;recordAd(button);
-      }).catch(function(e){console.error(e);resetAd('Ad failed')});
+      showNetworkAd(network).then(handleResult).catch(function(e){
+        console.warn('Primary ad network ('+network+') failed, falling back:',e);
+        // One network being down/unapproved shouldn't block unlocking —
+        // silently retry with the other network instead.
+        var fallback=network==='adsgram'?'monetag':'adsgram';
+        showNetworkAd(fallback).then(handleResult).catch(function(e2){
+          console.error(e2);resetAd('Ad failed');
+        });
+      });
     }catch(e){console.error(e);resetAd('Ad failed')}
   }).catch(function(e){console.error(e);resetAd('Ad শুরু করা যায়নি')});
 }
