@@ -521,10 +521,13 @@ function loadHome(){
     });
 }
 
-// AdsGram not approved yet — once you get a real Block ID from the AdsGram
-// dashboard, paste it here. Until then showNetworkAd() below will just fall
-// back to Monetag automatically, so nothing breaks in the meantime.
-var ADSGRAM_BLOCK_ID='REPLACE_WITH_YOUR_ADSGRAM_BLOCK_ID';
+// AdsGram Block ID is set. Until this platform is actually approved by
+// AdsGram, ctrl.show() below will simply fail/reject (no real ads to serve
+// yet) — showNetworkAd()'s built-in fallback then quietly retries with
+// Monetag instead, so unlocking keeps working exactly as before. Once
+// AdsGram approves the platform, this same code starts alternating for real
+// with zero further changes needed.
+var ADSGRAM_BLOCK_ID='48464';
 var adsgramController=null;
 function getAdsgramController(){
   if(adsgramController) return adsgramController;
