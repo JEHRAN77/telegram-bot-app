@@ -14,14 +14,24 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// ✅ Emoji/multi-byte-safe truncate.
-// Plain String.slice() cuts by UTF-16 code units, so it can chop an emoji's
-// surrogate pair in half, leaving a broken lone-surrogate character. When that
-// broken string is sent to Telegram as button text, the API rejects the whole
-// request with "400: inline keyboard button text must be encoded in UTF-8" —
-// which makes the button (and everything after it) silently fail.
+// ✅ Emoji/multi-byte-safe truncate + sanitize.
+// Two related problems, both giving Telegram's
+// "400: inline keyboard button text must be encoded in UTF-8" error:
+//  1) Plain String.slice() cuts by UTF-16 code units, so it can chop an
+//     emoji's surrogate pair in half, creating a broken "lone surrogate"
+//     character.
+//  2) A lone surrogate can already be sitting inside a stored channel name
+//     or post caption in Firestore — e.g. saved back when problem #1 above
+//     was still happening — and simply truncating it more carefully doesn't
+//     remove damage that's already baked into the stored string.
+// This helper fixes both: it strips any unpaired surrogate first, then
+// truncates by whole characters (not raw UTF-16 units).
 function safeTruncate(str, maxLen) {
-  const chars = Array.from(String(str || ''));
+  const cleaned = String(str || '').replace(
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
+    ''
+  );
+  const chars = Array.from(cleaned);
   return chars.length > maxLen ? chars.slice(0, maxLen).join('') : chars.join('');
 }
 
@@ -2200,7 +2210,7 @@ function renderRepostPage(ctx, userId, page) {
     const caption = String(p.caption || p.title || '(Caption নেই)').replace(/\s+/g, ' ').trim();
     const media = p.type === 'photo' ? '🖼️' : '🎬';
     const date = p.postedAt ? new Date(Number(p.postedAt)).toLocaleDateString('en-GB') : '';
-    return [Markup.button.callback(`${media} ${caption.slice(0, 48)}${date ? ` • ${date}` : ''}`, `repost_post:${globalIndex}`)];
+    return [Markup.button.callback(`${media} ${safeTruncate(caption, 48)}${date ? ` • ${date}` : ''}`, `repost_post:${globalIndex}`)];
   });
 
   const navRow = [];
