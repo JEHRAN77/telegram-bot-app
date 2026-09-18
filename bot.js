@@ -178,15 +178,15 @@ async function safeSendPoll(chatId, question, options, extra = {}) {
 async function safeDeleteMessage(chatId, messageId) {
   try {
     await bot.telegram.deleteMessage(chatId, messageId);
-    return true;
+    return { ok: true, retryable: false };
   } catch (err) {
-    if (isBlockedError(err)) return false;
-    // "message to delete not found" বা "message can't be deleted" → ignore
+    // These errors mean there is nothing useful left to retry.
+    if (isBlockedError(err)) return { ok: false, retryable: false };
     if (/message to delete not found|message can't be deleted|MESSAGE_ID_INVALID/i.test(err.message || '')) {
-      return false;
+      return { ok: false, retryable: false };
     }
     console.warn(`⚠️ deleteMessage failed for ${chatId}/${messageId}: ${err.message}`);
-    return false;
+    return { ok: false, retryable: true };
   }
 }
 
@@ -4195,11 +4195,11 @@ async function runCleanupPass() {
             continue;
           }
           hadExpired = true;
-          const ok = await safeDeleteMessage(msg.chatId, msg.messageId);
-          if (ok) totalDeleted++;
-          else {
-            // Blocked user হলে retry করা অর্থহীন, তাই drop করি
-            if (isBlockedError({ message: 'blocked by the user' })) continue;
+          const result = await safeDeleteMessage(msg.chatId, msg.messageId);
+          if (result.ok) totalDeleted++;
+          else if (result.retryable) {
+            // Temporary Telegram/API failure: keep the record so a later
+            // cleanup pass can try again instead of losing the message ID.
             retryNeeded = true;
             remainingMessages.push(msg);
           }
@@ -4269,34 +4269,58 @@ async function migrateCleanupSchedule() {
   const markerRef = db.collection('system').doc('cleanup');
   try {
     const marker = await markerRef.get();
-    if (marker.exists && Number(marker.data().version) >= 2) {
+    if (marker.exists && Number(marker.data().version) >= 3) {
       console.log('⏭️ Cleanup migration already done.');
       return;
     }
-    console.log('🛠️ Preparing optimized cleanup schedule...');
-    const snapshot = await db.collection('users').limit(500).get();
-    let batch = db.batch();
-    let batchCount = 0;
-    let changed = 0;
 
-    for (const doc of snapshot.docs) {
-      const data = doc.data();
-      const sentMessages = Array.isArray(data.sentMessages) ? data.sentMessages : [];
-      const dueAt = getCleanupDueAt(sentMessages);
-      if (Number(data.cleanupDueAt) !== Number(dueAt)) {
-        batch.set(doc.ref, { cleanupDueAt: dueAt || null }, { merge: true });
-        batchCount++;
-        changed++;
+    // v3: rebuild cleanupDueAt for EVERY user, not only the first 500 users.
+    // This also picks up users/messages created before cleanupDueAt existed.
+    console.log('🛠️ Rebuilding video cleanup schedule for all users...');
+    let lastDoc = null;
+    let changed = 0;
+    let scanned = 0;
+
+    for (let page = 0; page < 100; page++) { // up to 50,000 users per migration
+      let q = db.collection('users')
+        .orderBy(admin.firestore.FieldPath.documentId())
+        .limit(500);
+      if (lastDoc) q = q.startAfter(lastDoc);
+      const snap = await q.get();
+      if (snap.empty) break;
+      lastDoc = snap.docs[snap.docs.length - 1];
+      scanned += snap.size;
+
+      let batch = db.batch();
+      let batchCount = 0;
+      for (const doc of snap.docs) {
+        const data = doc.data() || {};
+        const sentMessages = Array.isArray(data.sentMessages) ? data.sentMessages : [];
+        const dueAt = getCleanupDueAt(sentMessages);
+        const oldDue = Number(data.cleanupDueAt) || null;
+        const newDue = dueAt || null;
+        if (oldDue !== newDue) {
+          batch.set(doc.ref, { cleanupDueAt: newDue }, { merge: true });
+          batchCount++;
+          changed++;
+        }
+        if (batchCount >= 450) {
+          await batch.commit();
+          batch = db.batch();
+          batchCount = 0;
+        }
       }
-      if (batchCount >= 450) {
-        await batch.commit();
-        batch = db.batch();
-        batchCount = 0;
-      }
+      if (batchCount > 0) await batch.commit();
+      if (snap.size < 500) break;
     }
-    batch.set(markerRef, { version: 2, updatedAt: Date.now() }, { merge: true });
-    await batch.commit();
-    console.log(`✅ Cleanup migration complete: ${changed} users scheduled.`);
+
+    await markerRef.set({
+      version: 3,
+      updatedAt: Date.now(),
+      scannedUsers: scanned,
+      changedUsers: changed
+    }, { merge: true });
+    console.log(`✅ Cleanup migration complete: ${changed} users scheduled (${scanned} scanned).`);
   } catch (error) {
     console.error('❌ Cleanup migration error:', error.message);
   }
@@ -4399,21 +4423,13 @@ bot.launch({
 })
   .then(() => {
     console.log('🤖 Bot started successfully (polling mode)');
-    // Migration একবার চালাই
-    migrateCleanupSchedule().catch(() => {});
-    // 🐛 FIX (repeat-unlock bug, retroactive part): clear out any adProgress
-    // left stuck at "maxed out" from before this fix existed (see the
-    // function's own comment above for why this can't self-heal without a
-    // one-time sweep).
-    migrateStaleAdProgress().catch(() => {});
-    // 🐛 FIX (delayed cleanup bug): Render's free tier spins the server down
-    // after ~15 min idle. While asleep, node-cron can't fire — so any video
-    // due for deletion just sits there until the next incoming request
-    // happens to wake the dyno back up AND the next */2-minute tick lands.
-    // That gap explained videos still sitting undeleted an hour+ after
-    // their 30-minute window. Run one cleanup pass immediately on every
-    // boot/wake so a sleep period never leaves a backlog waiting on a timer.
-    runCleanupPass().catch(e => console.error('❌ Startup cleanup pass error:', e.message));
+    // Run migrations in order, then immediately process all due videos.
+    // This is important for old users whose sentMessages existed before
+    // cleanupDueAt was introduced.
+    migrateCleanupSchedule()
+      .then(() => migrateStaleAdProgress())
+      .then(() => runCleanupPass())
+      .catch(e => console.error('❌ Startup cleanup/migration error:', e.message));
   })
   .catch(err => {
     console.error('❌ Bot start error:', err.message);
