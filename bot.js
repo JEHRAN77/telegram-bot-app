@@ -3963,10 +3963,24 @@ app.post('/api/ad-complete', async (req, res) => {
       // trigger the cleanup, regardless of what the other two say.
       const unlockTime = Number(topicUnlockTime[topicId]) || 0;
       const stillActive = unlockTime > 0 && (nowTx - unlockTime) < THIRTY_MINUTES;
+      // 🐛 FIX (regression from the previous pass — this is what just broke
+      // "never unlocks, stuck showing ads"): checking bare
+      // `hasOwnProperty(progress, topicId)` treated ANY existing progress —
+      // including a completely normal, legitimate in-progress count like 1
+      // or 2 out of 3 — as "stale", and wiped it back to 0 on every single
+      // watch. A topic is never "stillActive" until it's FULLY unlocked, so
+      // that condition fired on watch #2, #3, every time, and the count
+      // could never climb past 1. The actual orphan signature (leftover
+      // from a completed unlock whose unlockedTopics/topicUnlockTime entries
+      // got lost) is progress sitting AT OR ABOVE `required` — that can only
+      // happen after a topic was already fully earned once. A genuine
+      // in-progress count is always below `required`, so checking `>=
+      // required` here catches real orphans without touching normal counting.
+      const hasOrphanedFullProgress = !stillActive && Number(progress[topicId]) >= required;
       const hasStaleData = !stillActive && (
         unlockedTopics.includes(topicId) ||
         Object.prototype.hasOwnProperty.call(topicUnlockTime, topicId) ||
-        Object.prototype.hasOwnProperty.call(progress, topicId)
+        hasOrphanedFullProgress
       );
       let expiredCleanup = false;
       if (hasStaleData) {
