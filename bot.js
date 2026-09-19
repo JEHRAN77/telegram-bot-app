@@ -383,17 +383,24 @@ async function recordAdView() {
   }
 }
 
-// 💵 Real, confirmed revenue — recorded only when Monetag's own server calls
-// our postback URL (configured in the Monetag SSP dashboard, per zone) to
+// 💵 Real, confirmed revenue — recorded only when an ad network's OWN SERVER
+// calls one of our postback URLs (configured in that network's dashboard) to
 // confirm an ad was actually monetized. Unlike the client-side count above,
-// this cannot be faked from the browser.
-async function recordRealAdRevenue(amount) {
+// this cannot be faked from the browser. `network` is just which postback
+// hit ('monetag' or 'onclicka') so the admin panel can show a per-network
+// breakdown — it does NOT affect the combined totals below, which stay the
+// same shape they always were (adProgress/unlock logic never reads any of
+// this; it's purely for the Revenue admin screen).
+async function recordRealAdRevenue(amount, network) {
   try {
     const today = getDhakaDateKey();
+    const net = network === 'onclicka' ? 'onclicka' : 'monetag';
     await db.collection('system').doc('adStats').set({
       totalRevenueReal: admin.firestore.FieldValue.increment(amount),
       revenueByDate: { [today]: admin.firestore.FieldValue.increment(amount) },
-      totalPostbacksReceived: admin.firestore.FieldValue.increment(1)
+      totalPostbacksReceived: admin.firestore.FieldValue.increment(1),
+      [`totalRevenueReal_${net}`]: admin.firestore.FieldValue.increment(amount),
+      [`totalPostbacksReceived_${net}`]: admin.firestore.FieldValue.increment(1)
     }, { merge: true });
   } catch (e) {
     console.error('❌ recordRealAdRevenue error:', e.message);
@@ -411,7 +418,11 @@ async function getAdStats() {
   const revByDate = data.revenueByDate || {};
   const todayRevenueReal = Number(revByDate[today]) || 0;
   const totalPostbacksReceived = Number(data.totalPostbacksReceived) || 0;
-  return { totalAdViews, todayAdViews, totalRevenueReal, todayRevenueReal, totalPostbacksReceived };
+  const totalPostbacksReceived_monetag = Number(data.totalPostbacksReceived_monetag) || 0;
+  const totalPostbacksReceived_onclicka = Number(data.totalPostbacksReceived_onclicka) || 0;
+  const totalRevenueReal_monetag = Number(data.totalRevenueReal_monetag) || 0;
+  const totalRevenueReal_onclicka = Number(data.totalRevenueReal_onclicka) || 0;
+  return { totalAdViews, todayAdViews, totalRevenueReal, todayRevenueReal, totalPostbacksReceived, totalPostbacksReceived_monetag, totalPostbacksReceived_onclicka, totalRevenueReal_monetag, totalRevenueReal_onclicka };
 }
 
 // GET /api/postback/monetag?secret=...&ymid=...&event=impression&value=valued&amount=0.0042
@@ -429,11 +440,45 @@ app.get('/api/postback/monetag', async (req, res) => {
     const rewardStatus = String(req.query.value || req.query.reward_event_type || '').toLowerCase();
     const amount = Number(req.query.amount || req.query.estimated_price) || 0;
     if (rewardStatus === 'valued' && amount > 0) {
-      await recordRealAdRevenue(amount);
+      await recordRealAdRevenue(amount, 'monetag');
     }
     return res.sendStatus(200);
   } catch (error) {
     console.error('❌ Monetag postback error:', error.message);
+    return res.sendStatus(200);
+  }
+});
+
+// GET /api/onclicka-confirm?secret=...&userid=...&amount=0.0042
+// This is the OnClickA equivalent of the Monetag postback above: a
+// server-to-server call from OnClickA's OWN backend (configured as the
+// postback/S2S URL in the OnClickA publisher dashboard for this Spot ID),
+// never from the browser — so, exactly like Monetag's postback, it can't be
+// spoofed by anyone editing page JS. Deliberately independent from
+// /api/ad-start and /api/ad-complete: it only feeds the real-revenue number
+// on the admin Revenue screen and never gates unlocking, so which network
+// actually served a given ad-attempt has zero effect on the existing
+// ad-count/daily-limit/unlock logic (that logic doesn't know OnClickA
+// exists). Always respond 200 so OnClickA doesn't keep retrying.
+// NOTE: OnClickA's exact postback macro names weren't specified — `userid`
+// and `amount` below are the obvious guesses (matching the pattern the user
+// asked for: /api/onclicka-confirm?USERID=...). Confirm the exact macro
+// names/casing in the OnClickA dashboard once you set up the postback there,
+// and adjust the req.query.* keys below to match if they differ.
+app.get('/api/onclicka-confirm', async (req, res) => {
+  try {
+    const secret = process.env.ONCLICKA_POSTBACK_SECRET;
+    if (!secret || req.query.secret !== secret) {
+      console.warn('⚠️ Rejected OnClickA postback with invalid/missing secret');
+      return res.sendStatus(200);
+    }
+    const amount = Number(req.query.amount || req.query.payout || req.query.value) || 0;
+    if (amount > 0) {
+      await recordRealAdRevenue(amount, 'onclicka');
+    }
+    return res.sendStatus(200);
+  } catch (error) {
+    console.error('❌ OnClickA postback error:', error.message);
     return res.sendStatus(200);
   }
 });
@@ -2113,14 +2158,17 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
       `💵 আনুমানিক মোট আয় (estimate): ${estTotalRevenue.toFixed(2)} ৳\n` +
       `💵 আনুমানিক আজকের আয় (estimate): ${estTodayRevenue.toFixed(2)} ৳\n`;
     if (stats.totalPostbacksReceived > 0) {
-      text += `\n✅ REAL CONFIRMED REVENUE (Monetag Postback দিয়ে verified):\n` +
+      text += `\n✅ REAL CONFIRMED REVENUE (Postback দিয়ে verified):\n` +
         `💵 মোট: ${stats.totalRevenueReal.toFixed(4)} ৳\n` +
         `💵 আজকে: ${stats.todayRevenueReal.toFixed(4)} ৳\n` +
-        `📩 মোট Postback পাওয়া গেছে: ${stats.totalPostbacksReceived}টি`;
+        `📩 মোট Postback পাওয়া গেছে: ${stats.totalPostbacksReceived}টি ` +
+        `(Monetag: ${stats.totalPostbacksReceived_monetag}টি, OnClickA: ${stats.totalPostbacksReceived_onclicka}টি)`;
     } else {
-      text += `\n⚠️ এখনো কোনো Monetag Postback পাওয়া যায়নি — উপরের সংখ্যাগুলো শুধুই estimate। প্রকৃত আয় দেখতে Monetag SSP dashboard-এ গিয়ে আপনার zone-এর Postback URL সেট করুন:\n` +
-        `<code>${escapeHtml(SELF_URL || 'https://your-domain.com')}/api/postback/monetag?secret=YOUR_SECRET&ymid={ymid}&event={event_type}&value={reward_event_type}&amount={estimated_price}</code>\n\n` +
-        `(YOUR_SECRET-এর জায়গায় আপনার .env-এর POSTBACK_SECRET বসাবেন)`;
+      text += `\n⚠️ এখনো কোনো Postback পাওয়া যায়নি — উপরের সংখ্যাগুলো শুধুই estimate। প্রকৃত আয় দেখতে প্রতিটা network-এর dashboard-এ গিয়ে Postback URL সেট করুন:\n` +
+        `<code>${escapeHtml(SELF_URL || 'https://your-domain.com')}/api/postback/monetag?secret=YOUR_SECRET&ymid={ymid}&event={event_type}&value={reward_event_type}&amount={estimated_price}</code>\n` +
+        `(YOUR_SECRET = .env-এর POSTBACK_SECRET)\n\n` +
+        `<code>${escapeHtml(SELF_URL || 'https://your-domain.com')}/api/onclicka-confirm?secret=YOUR_SECRET&userid={userid}&amount={payout}</code>\n` +
+        `(YOUR_SECRET = .env-এর ONCLICKA_POSTBACK_SECRET; OnClickA dashboard-এ সঠিক macro name যাচাই করে বসাবেন)`;
     }
     return ctx.editMessageText(text, { parse_mode: 'HTML', ...{ reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⚙️ CPM সেট করুন', 'adm_set_cpm')], [Markup.button.callback('⬅️ Back', 'adm_home')]]).reply_markup } });
   }
