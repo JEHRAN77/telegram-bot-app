@@ -422,7 +422,8 @@ async function getAdStats() {
   const totalPostbacksReceived_onclicka = Number(data.totalPostbacksReceived_onclicka) || 0;
   const totalRevenueReal_monetag = Number(data.totalRevenueReal_monetag) || 0;
   const totalRevenueReal_onclicka = Number(data.totalRevenueReal_onclicka) || 0;
-  return { totalAdViews, todayAdViews, totalRevenueReal, todayRevenueReal, totalPostbacksReceived, totalPostbacksReceived_monetag, totalPostbacksReceived_onclicka, totalRevenueReal_monetag, totalRevenueReal_onclicka };
+  const confirmedViews_onclicka = Number(data.confirmedViews_onclicka) || 0;
+  return { totalAdViews, todayAdViews, totalRevenueReal, todayRevenueReal, totalPostbacksReceived, totalPostbacksReceived_monetag, totalPostbacksReceived_onclicka, totalRevenueReal_monetag, totalRevenueReal_onclicka, confirmedViews_onclicka };
 }
 
 // GET /api/postback/monetag?secret=...&ymid=...&event=impression&value=valued&amount=0.0042
@@ -449,32 +450,58 @@ app.get('/api/postback/monetag', async (req, res) => {
   }
 });
 
-// GET /api/onclicka-confirm?secret=...&userid=...&amount=0.0042
+// 👁️ A confirmed-view counter for postbacks that only tell us a view
+// happened (no payout amount) — currently that's OnClickA's TMA postback
+// (see /api/onclicka-confirm below). Kept separate from recordRealAdRevenue,
+// which is for postbacks that DO carry a ৳ amount (Monetag's).
+async function recordConfirmedAdView(network, telegramUserId) {
+  try {
+    const today = getDhakaDateKey();
+    await db.collection('system').doc('adStats').set({
+      [`confirmedViews_${network}`]: admin.firestore.FieldValue.increment(1),
+      [`confirmedViewsByDate_${network}`]: { [today]: admin.firestore.FieldValue.increment(1) }
+    }, { merge: true });
+  } catch (e) {
+    console.error(`❌ recordConfirmedAdView(${network}) error:`, e.message);
+  }
+}
+
+// GET /api/onclicka-confirm/:secret?USERID=<telegram_user_id>
 // This is the OnClickA equivalent of the Monetag postback above: a
 // server-to-server call from OnClickA's OWN backend (configured as the
 // postback/S2S URL in the OnClickA publisher dashboard for this Spot ID),
 // never from the browser — so, exactly like Monetag's postback, it can't be
 // spoofed by anyone editing page JS. Deliberately independent from
-// /api/ad-start and /api/ad-complete: it only feeds the real-revenue number
-// on the admin Revenue screen and never gates unlocking, so which network
-// actually served a given ad-attempt has zero effect on the existing
-// ad-count/daily-limit/unlock logic (that logic doesn't know OnClickA
-// exists). Always respond 200 so OnClickA doesn't keep retrying.
-// NOTE: OnClickA's exact postback macro names weren't specified — `userid`
-// and `amount` below are the obvious guesses (matching the pattern the user
-// asked for: /api/onclicka-confirm?USERID=...). Confirm the exact macro
-// names/casing in the OnClickA dashboard once you set up the postback there,
-// and adjust the req.query.* keys below to match if they differ.
-app.get('/api/onclicka-confirm', async (req, res) => {
+// /api/ad-start and /api/ad-complete: it only feeds the admin Revenue/Views
+// screen and never gates unlocking, so which network actually served a given
+// ad-attempt has zero effect on the existing ad-count/daily-limit/unlock
+// logic (that logic doesn't know OnClickA exists). Always respond 200 so
+// OnClickA doesn't keep retrying.
+//
+// NOTE ON URL SHAPE: OnClickA's own doc says the exact callback format is
+// `YOUR_HANDLER_URL?USERID=TELEGRAM_USER_ID` — they append `?USERID=...`
+// themselves. That means the URL we hand them must NOT already contain a
+// `?` (a second `?` doesn't start a new query string per the URL spec, so
+// `?secret=X?USERID=Y` would make Express read the whole `X?USERID=Y` as
+// the value of `secret`, and USERID would never be its own field). So the
+// secret goes in the PATH instead — `/api/onclicka-confirm/<secret>` — and
+// `?USERID=...` is then the one-and-only query string OnClickA adds.
+//
+// NOTE ON amount: OnClickA's documented macro set for this callback is just
+// USERID — no revenue/payout macro is mentioned. So this endpoint doesn't
+// try to credit a specific ৳ amount (unlike the Monetag postback above);
+// it just counts a confirmed view per network for the admin panel. If
+// OnClickA's support team confirms a payout macro exists, add it back here.
+app.get('/api/onclicka-confirm/:secret', async (req, res) => {
   try {
-    const secret = process.env.ONCLICKA_POSTBACK_SECRET;
-    if (!secret || req.query.secret !== secret) {
+    const expectedSecret = process.env.ONCLICKA_POSTBACK_SECRET;
+    if (!expectedSecret || req.params.secret !== expectedSecret) {
       console.warn('⚠️ Rejected OnClickA postback with invalid/missing secret');
       return res.sendStatus(200);
     }
-    const amount = Number(req.query.amount || req.query.payout || req.query.value) || 0;
-    if (amount > 0) {
-      await recordRealAdRevenue(amount, 'onclicka');
+    const telegramUserId = String(req.query.USERID || req.query.userid || '').trim();
+    if (telegramUserId) {
+      await recordConfirmedAdView('onclicka', telegramUserId);
     }
     return res.sendStatus(200);
   } catch (error) {
@@ -2157,18 +2184,18 @@ bot.action(/^adm_(.+)$/, async (ctx) => {
       `⚙️ CPM (প্রতি ১০০০ view): ${cpm} ৳\n` +
       `💵 আনুমানিক মোট আয় (estimate): ${estTotalRevenue.toFixed(2)} ৳\n` +
       `💵 আনুমানিক আজকের আয় (estimate): ${estTodayRevenue.toFixed(2)} ৳\n`;
-    if (stats.totalPostbacksReceived > 0) {
-      text += `\n✅ REAL CONFIRMED REVENUE (Postback দিয়ে verified):\n` +
-        `💵 মোট: ${stats.totalRevenueReal.toFixed(4)} ৳\n` +
-        `💵 আজকে: ${stats.todayRevenueReal.toFixed(4)} ৳\n` +
-        `📩 মোট Postback পাওয়া গেছে: ${stats.totalPostbacksReceived}টি ` +
-        `(Monetag: ${stats.totalPostbacksReceived_monetag}টি, OnClickA: ${stats.totalPostbacksReceived_onclicka}টি)`;
+    if (stats.totalPostbacksReceived > 0 || stats.confirmedViews_onclicka > 0) {
+      text += `\n✅ REAL CONFIRMED (Postback দিয়ে verified):\n` +
+        `💵 Monetag Revenue — মোট: ${stats.totalRevenueReal.toFixed(4)} ৳, আজকে: ${stats.todayRevenueReal.toFixed(4)} ৳\n` +
+        `📩 Monetag Postback: ${stats.totalPostbacksReceived_monetag}টি\n` +
+        `👁️ OnClickA Confirmed Views: ${stats.confirmedViews_onclicka}টি ` +
+        `(OnClickA-এর postback-এ কোনো ৳ amount macro নেই, তাই শুধু view-count confirm হয়, revenue না)`;
     } else {
-      text += `\n⚠️ এখনো কোনো Postback পাওয়া যায়নি — উপরের সংখ্যাগুলো শুধুই estimate। প্রকৃত আয় দেখতে প্রতিটা network-এর dashboard-এ গিয়ে Postback URL সেট করুন:\n` +
+      text += `\n⚠️ এখনো কোনো Postback পাওয়া যায়নি — উপরের সংখ্যাগুলো শুধুই estimate। প্রকৃত আয়/view confirm করতে প্রতিটা network-এর dashboard-এ গিয়ে Postback URL সেট করুন:\n` +
         `<code>${escapeHtml(SELF_URL || 'https://your-domain.com')}/api/postback/monetag?secret=YOUR_SECRET&ymid={ymid}&event={event_type}&value={reward_event_type}&amount={estimated_price}</code>\n` +
         `(YOUR_SECRET = .env-এর POSTBACK_SECRET)\n\n` +
-        `<code>${escapeHtml(SELF_URL || 'https://your-domain.com')}/api/onclicka-confirm?secret=YOUR_SECRET&userid={userid}&amount={payout}</code>\n` +
-        `(YOUR_SECRET = .env-এর ONCLICKA_POSTBACK_SECRET; OnClickA dashboard-এ সঠিক macro name যাচাই করে বসাবেন)`;
+        `<code>${escapeHtml(SELF_URL || 'https://your-domain.com')}/api/onclicka-confirm/YOUR_ONCLICKA_SECRET</code>\n` +
+        `(YOUR_ONCLICKA_SECRET = .env-এর ONCLICKA_POSTBACK_SECRET; শুধু এই URL-টাই OnClickA-কে দেবেন — এরপর ?USERID=... ওরা নিজে জুড়ে দেয়, secret কখনো query string-এ দেবেন না)`;
     }
     return ctx.editMessageText(text, { parse_mode: 'HTML', ...{ reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⚙️ CPM সেট করুন', 'adm_set_cpm')], [Markup.button.callback('⬅️ Back', 'adm_home')]]).reply_markup } });
   }
@@ -3920,6 +3947,29 @@ async function deliverUnlockedTopicInner(userId, topicId) {
 // Issue a short-lived token right before showing the ad. The frontend must
 // send this back with /api/ad-complete — this is what makes it hard for a
 // script to skip the ad and call ad-complete directly.
+// 🔁 Ad-network rotation counter — GLOBAL (not per-topic), because most
+// topics only require 1 ad to unlock (adsRequired=1): if the rotation were
+// keyed off each topic's own progress (adCount, which is always 0 at the
+// start of a 1-ad topic), Monetag would win literally every single time and
+// OnClickA would never get picked. A single global, atomically-incremented
+// counter guarantees a genuine 1st→Monetag, 2nd→OnClickA, 3rd→Monetag...
+// alternation across every ad watched by every user, regardless of how many
+// ads any individual topic needs.
+async function nextAdNetwork() {
+  try {
+    const counterRef = db.collection('system').doc('adNetworkRotation');
+    return await db.runTransaction(async tx => {
+      const snap = await tx.get(counterRef);
+      const current = snap.exists ? (Number(snap.data().counter) || 0) : 0;
+      tx.set(counterRef, { counter: current + 1 }, { merge: true });
+      return (current % 2 === 0) ? 'monetag' : 'onclicka';
+    });
+  } catch (e) {
+    console.error('❌ nextAdNetwork error, defaulting to monetag:', e.message);
+    return 'monetag';
+  }
+}
+
 app.post('/api/ad-start', async (req, res) => {
   try {
     const userId = String(req.body.userId || '').trim();
@@ -3935,7 +3985,8 @@ app.post('/api/ad-start', async (req, res) => {
     cleanupAdTokens();
     const token = crypto.randomBytes(16).toString('hex');
     adTokens.set(token, { userId, topicId, createdAt: Date.now() });
-    return res.json({ success: true, token });
+    const network = await nextAdNetwork();
+    return res.json({ success: true, token, network });
   } catch (error) {
     console.error('❌ /api/ad-start error:', error.message);
     return res.status(500).json({ success: false, error: 'Server error' });
