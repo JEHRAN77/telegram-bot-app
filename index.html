@@ -333,47 +333,63 @@ function buildHistoryContext(){
   });
   return {historyIds:historyIds,pref:pref};
 }
-// Rotation window: how often each user's personalized order/explore boost
-// reshuffles. Was keyed by calendar day (24h) before — bumped down to 2h so
-// suggestions actually feel fresh through the day instead of being frozen
-// from midnight to midnight.
+// Rotation window: how often each user's personalized order reshuffles.
 var ROTATION_WINDOW_MS=2*60*60*1000;
-function rotationKey(){
-  return Math.floor(Date.now()/ROTATION_WINDOW_MS);
+
+// Use the SERVER's clock for the window boundaries. If a phone's clock is
+// wrong, its 2-hour windows would start at the wrong moment (and differ from
+// everyone else's). Only corrected when the phone is clearly off (>2 min).
+var serverSkewMs=0;
+function nowMs(){return Date.now()+serverSkewMs;}
+function noteServerTime(resp){
+  try{
+    var d=resp && resp.headers && resp.headers.get('Date');
+    var t=d?new Date(d).getTime():NaN;
+    if(Number.isFinite(t)){
+      var skew=t-Date.now();
+      serverSkewMs=Math.abs(skew)>120000?skew:0;
+    }
+  }catch(e){}
 }
-function personalizedScore(t,index,ctx){
+function rotationKey(){
+  return Math.floor(nowMs()/ROTATION_WINDOW_MS);
+}
+
+// Uniform number strictly between 0 and 1, fixed for a given key.
+function seededUnit(key){return ((hashString(String(key))%1000003)+1)/1000005;}
+
+// How much a video should be "favoured" for THIS user, in soft points.
+// (Not-yet-watched, fresh, popular and similar-to-what-they-watched all help.)
+var RANK_TEMPERATURE=25;
+function affinityPoints(t,ctx){
+  var q=0;
+  if(ctx.historyIds[String(t.id)]) q-=50;             // already watched → far less likely to lead
+  var age=Math.max(0,nowMs()-timeOf(t));
+  if(age<24*3600000) q+=30;
+  else if(age<72*3600000) q+=18;
+  else if(age<7*86400000) q+=8;
+  q+=Math.min(12,Math.log1p(viewsOf(t))*2);          // popularity, capped
+  var overlap=0;
+  titleTokens(t.title).forEach(function(tok){if(ctx.pref[tok]) overlap+=Math.min(3,ctx.pref[tok]);});
+  q+=Math.min(14,overlap*3.5);                       // similar to what they watched
+  if(viewsOf(t)<ctx.avgViews) q+=5;                  // under-exposed videos get a standing boost
+  return q;
+}
+
+// Weighted RANDOM order (Efraimidis–Spirakis), seeded by user + 2-hour window:
+//  • every user gets a different order (the seed contains their user id),
+//  • the whole order reshuffles when the 2-hour window changes,
+//  • it stays perfectly stable inside a window (no jumping on re-render),
+//  • better-fitting videos are simply more LIKELY to be near the top.
+// The old version added a small random number (max ~28 points) to big fixed
+// bonuses (up to 72 for "not watched", 30 for "new" …), so the top of the list
+// was the same for everybody and barely moved when the window changed.
+function rankKey(t,ctx){
+  if(unlocked[t.id]) return -1e9;                    // currently unlocked → sink to the bottom
+  var w=Math.exp(affinityPoints(t,ctx)/RANK_TEMPERATURE);
   var uid=userId()||'guest';
-  var rot=ctx.rotationKey;
-  var active=!!unlocked[t.id];
-  var score=0;
-  if(!ctx.historyIds[String(t.id)]) score+=48; else score-=24;
-  if(active) score-=1000;
-  var age=Math.max(0,Date.now()-timeOf(t));
-  if(age<24*3600000) score+=30;
-  else if(age<72*3600000) score+=15;
-  else if(age<7*86400000) score+=6;
-  score+=Math.min(22,Math.log1p(viewsOf(t))*3.2);
-
-  var tt=titleTokens(t.title), overlap=0;
-  tt.forEach(function(tok){if(ctx.pref[tok]) overlap+=Math.min(4,ctx.pref[tok]);});
-  score+=Math.min(24,overlap*6);
-
-  // Exploration boost: your quieter/under-exposed videos (below the catalog's
-  // average view count) get a real, per-user-rotating chance to land near the
-  // top too — instead of the same popular handful always winning for every
-  // single user. Seeded by user+rotation-window+topic, so it's stable for one
-  // person within one 2-hour window but different users (and the next
-  // window) see different videos get the boost — spreading views across your
-  // whole library over time instead of concentrating them on a few titles
-  // forever.
-  if(viewsOf(t)<ctx.avgViews){
-    score+=seededScore(uid+'|explore|'+rot+'|'+t.id)*20;
-  }
-
-  // Small deterministic rotation (every 2h) prevents the All tab from feeling static.
-  score+=seededScore(uid+'|'+rot+'|'+t.id)*8;
-  score+=Math.max(0,8-index*0.08);
-  return score;
+  var u=seededUnit(uid+'|'+ctx.rotationKey+'|'+t.id);
+  return Math.log(u)/w;
 }
 function sortTopics(){
   var a=topics.slice();
@@ -394,8 +410,8 @@ function sortTopics(){
     var ctx=buildHistoryContext();
     ctx.avgViews=a.length?a.reduce(function(s,x){return s+viewsOf(x)},0)/a.length:0;
     ctx.rotationKey=rotationKey();
-    var scored=a.map(function(t,i){return {t:t,s:personalizedScore(t,i,ctx)}});
-    scored.sort(function(x,y){return y.s-x.s});
+    var scored=a.map(function(t,i){return {t:t,i:i,s:rankKey(t,ctx)}});
+    scored.sort(function(x,y){return y.s-x.s||x.i-y.i});
     a=scored.map(function(x){return x.t});
   }
   return a;
@@ -414,13 +430,19 @@ function renderHome(){
     var views=viewsOf(t);
     var ads=Math.max(1,Number(t.adsRequired)||1);
     var isUnlocked=!!unlocked[t.id];
+    // 🐛 FIX: this always showed "(0/ads)" for a locked topic, even when the
+    // server already has real partial progress for it (window.adProgress,
+    // from /api/user-unlocked) — e.g. the user watched 1 of 3 ads, closed
+    // the app, and came back. The button looked like it had forgotten their
+    // progress even though the server hadn't. Show the real starting count.
+    var startCount=Math.min(ads,Math.max(0,Number((window.adProgress||{})[t.id])||0));
     var thumb=t.thumbnail ? API+'/thumbnail/'+encodeURIComponent(t.thumbnail) : '';
     var img=thumb ? '<img src="'+thumb+'" alt="'+title+'" loading="'+(i<4?'eager':'lazy')+'" decoding="async" onerror="this.style.display=\'none\'">' : '';
     var btn=isUnlocked
       ? '<button class="card-btn unlocked" disabled>CONTENT UNLOCKED</button>'
       : dailyLimitReached
         ? '<button class="card-btn" disabled>আজকের Ad Limit শেষ</button>'
-        : '<button class="card-btn unlock-card" data-id="'+id+'">(0/'+ads+') Ads</button>';
+        : '<button class="card-btn unlock-card" data-id="'+id+'">('+startCount+'/'+ads+') Ads</button>';
 
     var card=document.createElement('article');
     card.className='topic-card';
@@ -452,11 +474,13 @@ function renderSingle(topic){
   var thumb=topic.thumbnail ? API+'/thumbnail/'+encodeURIComponent(topic.thumbnail) : '';
   var img=thumb ? '<img src="'+thumb+'" alt="'+title+'">' : '';
   var unlockedNow=!!unlocked[id];
+  // 🐛 FIX: same real-progress fix as renderHome() — see comment there.
+  var startCount=Math.min(ads,Math.max(0,Number((window.adProgress||{})[id])||0));
   var button=unlockedNow
     ? '<button id="singleUnlock" class="unlock-btn unlocked" disabled>CONTENT UNLOCKED</button>'
     : dailyLimitReached
       ? '<button id="singleUnlock" class="unlock-btn" disabled>আজকের Ad Limit শেষ</button>'
-      : '<button id="singleUnlock" class="unlock-btn">(0/'+ads+') Ads</button>';
+      : '<button id="singleUnlock" class="unlock-btn">('+startCount+'/'+ads+') Ads</button>';
 
   box.innerHTML=
     '<article class="single-card">'+
@@ -474,6 +498,7 @@ function renderSingle(topic){
 }
 
 function openHome(){
+  syncRotationOnResume();
   currentTopic=null;
   document.getElementById('singleView').style.display='none';
   document.getElementById('homeView').style.display='block';
@@ -524,12 +549,54 @@ function loadUnlocked(){
 
 function loadHome(){
   return fetch(API+'/topics')
-    .then(function(r){if(!r.ok)throw new Error('topics');return r.json()})
+    .then(function(r){if(!r.ok)throw new Error('topics');noteServerTime(r);return r.json()})
     .then(function(data){topics=Array.isArray(data)?data:[];renderHome();return loadUnlocked()})
     .catch(function(){
       document.getElementById('loading').innerHTML='<div class="error">ভিডিও লোড করতে সমস্যা হয়েছে। আবার চেষ্টা করুন।</div>';
     });
 }
+
+// Personalized rotation is calculated in 2-hour windows.  Previously the
+// score changed at the boundary, but the already-open Mini App never
+// re-rendered, so users could stay on the old order indefinitely.  Refresh
+// exactly at the next rotation boundary, then re-arm for the following one.
+var rotationRefreshTimer=null;
+var lastRenderedRotationKey=rotationKey();
+function scheduleRotationRefresh(){
+  if(rotationRefreshTimer) clearTimeout(rotationRefreshTimer);
+  var now=nowMs();
+  var nextBoundary=(Math.floor(now/ROTATION_WINDOW_MS)+1)*ROTATION_WINDOW_MS;
+  var delay=Math.max(1000,nextBoundary-now+150);
+  rotationRefreshTimer=setTimeout(function(){
+    rotationRefreshTimer=null;
+    var currentKey=rotationKey();
+    if(currentKey!==lastRenderedRotationKey){
+      lastRenderedRotationKey=currentKey;
+      var homeVisible=document.getElementById('homeView').style.display!=='none';
+      var modalVisible=document.getElementById('modal') && document.getElementById('modal').classList.contains('show');
+      // Never interrupt an ad/modal or a single-video screen.  The next
+      // boundary will be picked up when the user returns to Home.
+      if(homeVisible && !modalVisible && !isWatching){
+        loadHome().catch(function(e){console.warn('Rotation refresh failed:',e);});
+      }
+    }
+    scheduleRotationRefresh();
+  },delay);
+}
+function syncRotationOnResume(){
+  var currentKey=rotationKey();
+  if(currentKey!==lastRenderedRotationKey){
+    lastRenderedRotationKey=currentKey;
+    if(document.getElementById('homeView').style.display!=='none' && !isWatching){
+      loadHome().catch(function(e){console.warn('Rotation resume refresh failed:',e);});
+    }
+  }
+  scheduleRotationRefresh();
+}
+scheduleRotationRefresh();
+document.addEventListener('visibilitychange',function(){
+  if(document.visibilityState==='visible') syncRotationOnResume();
+});
 
 // Keep the Mini App UI in sync with the server-side 30-minute access window.
 // The server is the source of truth; this only refreshes the display so an
@@ -594,7 +661,10 @@ function startAds(topic,button){
   if(dailyLimitReached) return;
   currentTopic=topic;
   totalAds=Math.max(1,parseInt(topic.adsRequired,10)||1);
-  adCount=0;isWatching=true;adCompleted=false;
+  // 🐛 FIX: start from the real server-side progress instead of always 0 —
+  // see the renderHome()/renderSingle() fix above for why this matters.
+  adCount=Math.min(totalAds,Math.max(0,Number((window.adProgress||{})[topic.id])||0));
+  isWatching=true;adCompleted=false;
   if(button){button.disabled=true;button.textContent='Preparing Ad…';}
 
   fetch(API+'/ad-start',{
@@ -760,7 +830,13 @@ function resetAd(message){
   if(currentTopic){
     var b=document.getElementById('singleUnlock');
     if(b&&!unlocked[currentTopic.id]&&!dailyLimitReached){
-      b.disabled=false;b.textContent='(0/'+totalAds+') Ads';
+      // 🐛 FIX: this used to always reset to "(0/total)" on any failed ad
+      // attempt (timeout, network hiccup, ad SDK error) — even if the user
+      // had already banked real progress (e.g. 2 of 3 ads done, the 3rd
+      // attempt glitched). That wiped the visible count back to zero even
+      // though the server still had their earlier ads counted, making it
+      // look like all progress was lost. Show the real known count instead.
+      b.disabled=false;b.textContent='('+adCount+'/'+totalAds+') Ads';
     }
     renderHome();
   }

@@ -438,12 +438,61 @@ app.get('/api/postback/monetag', async (req, res) => {
   }
 });
 
+// sentAt can be a number, a numeric string, an ISO date string (very old data)
+// or a Firestore Timestamp — read all of them instead of silently treating
+// anything unusual as "no time".
+function sentAtOf(m) {
+  if (!m) return 0;
+  const raw = m.sentAt;
+  if (raw && typeof raw.toMillis === 'function') return raw.toMillis();
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return n;
+  const parsed = new Date(raw).getTime();
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+function msgKey(m) { return `${m && m.chatId}:${m && m.messageId}`; }
+// When the message must be deleted. An entry whose time can't be read is
+// treated as ALREADY DUE (deleted at the next pass) — never forgotten.
+function dueAtOf(m) {
+  const sentAt = sentAtOf(m);
+  return sentAt ? sentAt + THIRTY_MINUTES : 1;
+}
 function getCleanupDueAt(sentMessages) {
-  const times = (Array.isArray(sentMessages) ? sentMessages : [])
-    .map(m => Number(m && m.sentAt) || 0)
-    .filter(Boolean)
-    .map(sentAt => sentAt + THIRTY_MINUTES);
-  return times.length ? Math.min(...times) : null;
+  const list = (Array.isArray(sentMessages) ? sentMessages : []).filter(m => m && m.chatId && m.messageId);
+  if (!list.length) return null;
+  return Math.min(...list.map(dueAtOf));
+}
+
+// Deliveries currently in progress (used so a redeploy waits for them).
+let inflightDeliveries = 0;
+
+// 🐛 FIX (videos surviving a redeploy): every video is now written to the
+// user's `sentMessages` list THE MOMENT it is sent — atomically, in a
+// transaction that re-reads the fresh document. Before, all sent videos were
+// saved in one write at the very end of delivery (and that write replaced the
+// whole array), so a restart in the middle, or a concurrent cleanup pass,
+// could lose track of a video that was already in the user's chat.
+async function trackSentMessage(userRef, entry) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await db.runTransaction(async tx => {
+        const snap = await tx.get(userRef);
+        const data = snap.exists ? (snap.data() || {}) : {};
+        const list = Array.isArray(data.sentMessages) ? data.sentMessages.slice() : [];
+        if (!list.some(m => msgKey(m) === msgKey(entry))) list.push(entry);
+        tx.set(userRef, { sentMessages: list, cleanupDueAt: getCleanupDueAt(list) }, { merge: true });
+      });
+      return true;
+    } catch (e) {
+      lastError = e;
+      await new Promise(r => setTimeout(r, 300 * attempt));
+    }
+  }
+  console.error('❌ trackSentMessage failed after retries:', lastError && lastError.message);
+  // Last resort so the video is still removed even though Firestore is failing.
+  setTimeout(() => { safeDeleteMessage(entry.chatId, entry.messageId).catch(() => {}); }, THIRTY_MINUTES);
+  return false;
 }
 
 console.log('✅ Firebase Connected');
@@ -571,6 +620,14 @@ async function handleForwardedRepostCapture(ctx) {
   const info = getForwardChannelInfo(msg);
   if (!info || !info.messageId) {
     await ctx.reply('❌ এটা কোনো Channel থেকে সরাসরি Forward করা মেসেজ মনে হচ্ছে না। আবার Forward করে পাঠান।');
+    return true;
+  }
+
+  // A copy made by the Repost button is not a source post — adding it would
+  // put a duplicate of the original into the list.
+  const hiddenIds = await getRepostHiddenIds(info.channelId);
+  if (hiddenIds.has(Number(info.messageId))) {
+    await ctx.reply('ℹ️ এটা Repost করা কপি (বা মুছে যাওয়া Post)। এটা list-এ যোগ করা যাবে না — original Post-টা Forward করুন।');
     return true;
   }
 
@@ -1130,6 +1187,11 @@ bot.hears(/^\/addvideo(?:@[^\s]+)?$/i, handleAddVideoCommand);
 bot.hears(/^\/addtopic(?:@[^\s]+)?$/i, handleAddTopicCommand);
 
 bot.on('video', async (ctx) => {
+  // 🐛 FIX: only the admin's workflows may ever put media into STORAGE_CHANNEL.
+  // Media from normal users (photos, video files, GIF/video-sticker files …)
+  // is ignored completely.
+  if (!ctx.from || ctx.from.id !== ADMIN_ID) return;
+
   const userId = ctx.from.id;
   const video = ctx.message.video;
   const fileId = video.file_id;
@@ -1206,6 +1268,11 @@ bot.on('video', async (ctx) => {
 });
 
 bot.on('document', async (ctx) => {
+  // 🐛 FIX: only the admin's workflows may ever put media into STORAGE_CHANNEL.
+  // Media from normal users (photos, video files, GIF/video-sticker files …)
+  // is ignored completely.
+  if (!ctx.from || ctx.from.id !== ADMIN_ID) return;
+
   const userId = ctx.from.id;
   const document = ctx.message.document;
   if (!document.mime_type || !document.mime_type.startsWith('video/')) {
@@ -1274,29 +1341,6 @@ bot.on('document', async (ctx) => {
     return;
   }
 
-  try {
-    const storedFileId = await forwardVideoToStorageChannel(ctx, fileId);
-
-    if (addTopicData[userId]) {
-      const data = addTopicData[userId];
-      if (data.step === 'video') {
-        data.videos.push(storedFileId);
-        await ctx.reply(`✅ ভিডিও ${data.videos.length} সংরক্ষিত হয়েছে।\nআরও ভিডিও পাঠান অথবা /done লিখুন শেষ করতে।`);
-      }
-      return;
-    }
-    if (addVideoData[userId]) {
-      const data = addVideoData[userId];
-      if (data.step === 'video') {
-        data.videoId = storedFileId;
-        data.step = 'title';
-        await ctx.reply('📝 এই ভিডিওর জন্য একটি টাইটেল দিন:');
-      }
-      return;
-    }
-  } catch (error) {
-    await ctx.reply('❌ ভিডিও স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে।').catch(() => {});
-  }
 });
 
 bot.command('done', async (ctx) => {
@@ -1493,6 +1537,48 @@ async function cleanupChannelPosts(channelId) {
   await batch.commit();
 }
 
+// 📢 Repost list hygiene ---------------------------------------------------
+// Messages that must NEVER show up in the Repost list: the copies the bot
+// itself creates when reposting, and old posts that no longer exist in the
+// channel. They're remembered per channel (one small doc, arrayUnion) so the
+// list stays clean no matter which code path or old record tries to add them.
+async function hideFromRepostList(channelId, messageId) {
+  if (!channelId || !messageId) return;
+  try {
+    await db.collection('repostHidden').doc(String(channelId)).set({
+      ids: admin.firestore.FieldValue.arrayUnion(Number(messageId)),
+      updatedAt: Date.now()
+    }, { merge: true });
+  } catch (e) {
+    console.error('❌ hideFromRepostList error:', e.message);
+  }
+}
+
+async function getRepostHiddenIds(channelId) {
+  try {
+    const ref = db.collection('repostHidden').doc(String(channelId));
+    const snap = await ref.get();
+    let ids = snap.exists && Array.isArray(snap.data().ids) ? snap.data().ids.map(Number).filter(Number.isFinite) : [];
+    if (ids.length > 6000) {
+      // Keep the list from growing forever: message IDs only ever increase, so
+      // the highest ones are the ones that can still appear in the list.
+      ids = ids.sort((a, b) => a - b).slice(-3000);
+      ref.set({ ids, updatedAt: Date.now() }, { merge: true }).catch(() => {});
+    }
+    return new Set(ids);
+  } catch (e) {
+    console.warn('⚠️ Could not read repost hidden ids:', e.message);
+    return new Set();
+  }
+}
+
+function repostSignature(p) {
+  const hasTopic = p.topicId && p.topicId !== 'repost';
+  const cap = String(p.caption || p.title || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!hasTopic && !cap) return `msg:${p.messageId}`; // nothing to compare → keep separate
+  return `${hasTopic ? p.topicId : ''}|${p.type || ''}|${cap}`;
+}
+
 async function getRepostPostsForChannel(channelId) {
   const wanted = String(channelId || '');
   const map = new Map();
@@ -1541,8 +1627,25 @@ async function getRepostPostsForChannel(channelId) {
       });
     });
 
-  return Array.from(map.values())
+  // 1) Drop copies made by Repost itself + posts known to be gone.
+  const hidden = await getRepostHiddenIds(wanted);
+  const sorted = Array.from(map.values())
+    .filter(p => !hidden.has(Number(p.messageId)))
     .sort((a,b) => (Number(b.postedAt)||0) - (Number(a.postedAt)||0));
+
+  // 2) One button per piece of content. The same topic + caption + media type
+  // can be recorded several times (scheduled repeats, posting again, records
+  // left over from older versions) — that's what showed up as duplicate
+  // buttons. Keep the NEWEST as the button and remember the older message IDs
+  // as fallbacks in case the newest was deleted from the channel.
+  const groups = new Map();
+  for (const p of sorted) {
+    const sig = repostSignature(p);
+    const g = groups.get(sig);
+    if (!g) groups.set(sig, { ...p, fallbackIds: [], duplicateCount: 1 });
+    else { g.fallbackIds.push(Number(p.messageId)); g.duplicateCount++; }
+  }
+  return Array.from(groups.values());
 }
 
 bot.action(/^sched_repeat:(none|daily|weekly)$/, async (ctx) => {
@@ -2187,6 +2290,13 @@ bot.action(/^repost_channel:(\d+|default)$/, async ctx => {
 });
 
 const REPOST_PAGE_SIZE = 10;
+// Prevent double-click / Telegram retry races from copying the same source
+// post multiple times concurrently. The lock is per admin + source message,
+// so different posts can still be reposted normally.
+const repostInFlight = new Map();
+function repostLockKey(userId, rec) {
+  return `${String(userId)}:${String(rec.channelId)}:${String(rec.messageId)}`;
+}
 function renderRepostPage(ctx, userId, page) {
   const state = repostData[userId];
   if (!state || !state.posts) return ctx.answerCbQuery('❌ Repost data পাওয়া যায়নি');
@@ -2248,7 +2358,20 @@ bot.action(/^repost_confirm:(\d+)$/, async ctx => {
     return ctx.answerCbQuery('❌ Repost data পাওয়া যায়নি');
   }
   const rec = state.posts[index];
+  const lockKey = repostLockKey(ctx.from.id, rec);
+  if (repostInFlight.has(lockKey)) {
+    return ctx.answerCbQuery('⏳ এই Post-এর Repost ইতিমধ্যে চলছে। একটু অপেক্ষা করুন।');
+  }
+  repostInFlight.set(lockKey, Date.now());
   await ctx.answerCbQuery('Reposting...');
+
+  // Immediately replace the confirmation keyboard so a fast second tap cannot
+  // start another copy before the first Telegram API call finishes.
+  try {
+    await ctx.editMessageText(
+      `⏳ Repost করা হচ্ছে...\n\n📢 Channel: ${rec.channelId}\n🆔 Source Message ID: ${rec.messageId}`
+    );
+  } catch (_) {}
 
   try {
     // NOTE: Telegram's copyMessage does NOT carry over the original inline
@@ -2263,13 +2386,39 @@ bot.action(/^repost_confirm:(\d+)$/, async ctx => {
       }
     }
 
-    const copied = await bot.telegram.copyMessage(rec.channelId, rec.channelId, Number(rec.messageId), copyOptions);
-    await recordTopicPost(rec.topicId || 'repost', rec.channelId, copied.message_id, rec.type || 'video', rec.caption || '', rec.title || '');
+    // Try the newest saved message first; if it was deleted from the channel,
+    // fall back to older copies of the same post and forget the dead ones.
+    const candidates = [Number(rec.messageId), ...(Array.isArray(rec.fallbackIds) ? rec.fallbackIds : [])];
+    const goneRe = /message to copy not found|message not found|MESSAGE_ID_INVALID|message can't be copied/i;
+    let copied = null;
+    let lastError = null;
+    for (const sourceMessageId of candidates) {
+      try {
+        copied = await bot.telegram.copyMessage(rec.channelId, rec.channelId, sourceMessageId, copyOptions);
+        break;
+      } catch (copyErr) {
+        lastError = copyErr;
+        if (goneRe.test(copyErr.message || '')) {
+          hideFromRepostList(rec.channelId, sourceMessageId); // dead post — never list it again
+          continue;
+        }
+        throw copyErr; // a real error (permissions, rate limit …) — don't hammer the other IDs
+      }
+    }
+    if (!copied) throw (lastError || new Error('Post পাওয়া যায়নি'));
+
+    // IMPORTANT: A reposted message must NOT be added back to the Repost source
+    // list. The new copy's ID is remembered as "hidden" so that even if some
+    // other path (an old record, a forward, a channel update) tries to add it,
+    // it can never appear as a duplicate button.
+    await hideFromRepostList(rec.channelId, copied.message_id);
     delete repostData[ctx.from.id];
     return ctx.reply(`✅ Post আবার Repost হয়েছে (বাটনসহ)।\n\n📢 ${rec.channelId}\n📝 ${String(rec.caption || rec.title || '(Caption নেই)').slice(0, 300)}\n🆔 নতুন Message ID: ${copied.message_id}`, { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup });
   } catch (e) {
     console.error('❌ Repost error:', e.message);
     return ctx.reply(`❌ Repost করা যায়নি।\n\n📢 ${rec.channelId}\n🆔 Message ID: ${rec.messageId}\n\n${e.message}`);
+  } finally {
+    repostInFlight.delete(lockKey);
   }
 });
 
@@ -3313,6 +3462,11 @@ bot.on('animation', async (ctx) => {
 });
 
 bot.on('photo', async (ctx) => {
+  // 🐛 FIX: only the admin's workflows may ever put media into STORAGE_CHANNEL.
+  // Media from normal users (photos, video files, GIF/video-sticker files …)
+  // is ignored completely.
+  if (!ctx.from || ctx.from.id !== ADMIN_ID) return;
+
   const userId = ctx.from.id;
   const photo = ctx.message.photo;
   const fileId = photo[photo.length - 1].file_id;
@@ -3369,12 +3523,6 @@ bot.on('photo', async (ctx) => {
       delete thumbnailData[userId]; invalidateTopicsCache();
       return ctx.reply(`✅ Thumbnail আপডেট হয়েছে।\n🆔 <code>${escapeHtml(id)}</code>`, { parse_mode: 'HTML' });
     } catch (e) { return ctx.reply('❌ Thumbnail আপডেট করতে সমস্যা হয়েছে।'); }
-  }
-
-  try {
-    const storedFileId = await forwardPhotoToStorageChannel(ctx, fileId);
-  } catch (error) {
-    await ctx.reply('❌ থাম্বনেইল স্টোরেজ চ্যানেলে ফরওয়ার্ড করতে সমস্যা হয়েছে।').catch(() => {});
   }
 });
 
@@ -3600,9 +3748,13 @@ app.get('/api/user-unlocked/:userId', async (req, res) => {
     const today = getDhakaDateKey();
     const dailyUsed = data.dailyAdDate === today ? (Number(data.dailyAdsUsed) || 0) : 0;
     const dailyLimit = await getDailyAdLimit();
+    // `unlockedTopics` only holds the last 30 minutes, so the permanent watch
+    // history (watchedTopicIds) is merged in for the Mini App suggestions.
+    const watchedIds = Array.isArray(data.watchedTopicIds) ? data.watchedTopicIds : [];
+    const history = Array.from(new Set([...watchedIds, ...unlockedTopics]));
     res.json({
       topics: activeUnlocked,
-      history: unlockedTopics,
+      history,
       expiresAt,
       adProgress: data.adProgress || {},
       dailyLimit,
@@ -3614,6 +3766,15 @@ app.get('/api/user-unlocked/:userId', async (req, res) => {
 });
 
 async function deliverUnlockedTopic(userId, topicId) {
+  inflightDeliveries++;
+  try {
+    return await deliverUnlockedTopicInner(userId, topicId);
+  } finally {
+    inflightDeliveries--;
+  }
+}
+
+async function deliverUnlockedTopicInner(userId, topicId) {
   const userRef = db.collection('users').doc(userId.toString());
   const doc = await userRef.get();
   const data = doc.exists ? doc.data() : {};
@@ -3625,9 +3786,9 @@ async function deliverUnlockedTopic(userId, topicId) {
     throw new Error('User is blocked');
   }
 
-  let unlockedTopics = data.unlockedTopics || [];
-  let topicUnlockTime = data.topicUnlockTime || {};
-  let sentMessages = data.sentMessages || [];
+  const unlockedTopics = Array.isArray(data.unlockedTopics) ? data.unlockedTopics.slice() : [];
+  const topicUnlockTime = { ...(data.topicUnlockTime || {}) };
+  const priorSent = Array.isArray(data.sentMessages) ? data.sentMessages : [];
 
   const now = Date.now();
   const topicRef = db.collection('topics').doc(topicId);
@@ -3638,6 +3799,19 @@ async function deliverUnlockedTopic(userId, topicId) {
   if (firstUnlock) {
     unlockedTopics.push(topicId);
     topicUnlockTime[topicId] = now;
+
+    // Permanent watch history (used by the Mini App suggestions). The
+    // `unlockedTopics` list above is wiped after 30 minutes, so it can't be
+    // used as "what has this user already watched".
+    const watched = (Array.isArray(data.watchedTopicIds) ? data.watchedTopicIds : []).filter(x => x !== topicId);
+    watched.push(topicId);
+
+    // Save the unlock BEFORE sending, so a restart mid-delivery can't lose it.
+    await userRef.set({
+      unlockedTopics,
+      topicUnlockTime,
+      watchedTopicIds: watched.slice(-300)
+    }, { merge: true });
 
     try {
       const currentTopicData = topicDoc.data() || {};
@@ -3670,7 +3844,7 @@ async function deliverUnlockedTopic(userId, topicId) {
   const videos = topicDoc.data().videos || [];
   for (const videoId of videos) {
     try {
-      const alreadySent = sentMessages.some(m => m.videoId === videoId && m.topicId === topicId && (now - m.sentAt) < THIRTY_MINUTES);
+      const alreadySent = priorSent.some(m => m && m.videoId === videoId && m.topicId === topicId && (now - sentAtOf(m)) < THIRTY_MINUTES);
       if (alreadySent) continue;
       // safeSendVideo uses 403-tolerant wrapper
       const sentMsg = await safeSendVideo(userId, videoId, {
@@ -3678,25 +3852,19 @@ async function deliverUnlockedTopic(userId, topicId) {
         caption: '⏳ এই ভিডিও ৩০ মিনিট পর ডিলিট হয়ে যাবে।'
       });
       if (sentMsg) {
-        sentMessages.push({ messageId: sentMsg.message_id, chatId: userId, videoId, topicId, sentAt: Date.now() });
+        // Track it immediately (see trackSentMessage). NOTE: we deliberately do
+        // NOT drop older entries here — anything past 30 minutes that hasn't
+        // been deleted yet must stay in the list until the cleanup pass has
+        // actually deleted it. (The old code filtered those out at the end of
+        // every delivery, so a video whose cleanup was late — e.g. right after
+        // a redeploy or a Render sleep — was forgotten and never deleted.)
+        await trackSentMessage(userRef, { messageId: sentMsg.message_id, chatId: userId, videoId, topicId, sentAt: Date.now() });
       }
     } catch (sendError) {
       console.error(`❌ Error sending video:`, sendError.message);
     }
   }
 
-  sentMessages = sentMessages.filter(m => {
-    const sentAt = Number(m && m.sentAt) || 0;
-    return sentAt && (now - sentAt) < THIRTY_MINUTES;
-  });
-
-  const cleanupDueAt = getCleanupDueAt(sentMessages);
-  await userRef.set({
-    unlockedTopics,
-    topicUnlockTime,
-    sentMessages,
-    cleanupDueAt: cleanupDueAt || null
-  }, { merge: true });
   invalidateTopicsCache();
   return { success: true, videosDelivered: videos.length };
 }
@@ -3778,11 +3946,31 @@ app.post('/api/ad-complete', async (req, res) => {
       // re-unlock an actually-expired topic with just the ONE ad they'd
       // just watched. Now we check the real timestamp ourselves instead of
       // relying on the cron having already run.
+      //
+      // 🐛 FIX #2 (orphaned adProgress, root cause of "1 ad instead of 3"
+      // still happening even with the fix above): the self-heal below used
+      // to run ONLY when `unlockedTopics.includes(topicId)` was true. But a
+      // record can end up with `unlockedTopics`/`topicUnlockTime` already
+      // cleared (by an older cron run, or any earlier partial write) while
+      // `adProgress[topicId]` is still sitting at `required` from that same
+      // old unlock — nothing left to trigger cleanup on. On the user's very
+      // next ad watch, `unlockedTopics.includes(topicId)` was false, so the
+      // block never ran, `progress[topicId]` was never deleted, and the
+      // transaction saw `current === required` immediately: one ad watch
+      // and `next >= required` was true again. Now we check `progress`,
+      // `topicUnlockTime`, and `unlockedTopics` independently — any one of
+      // them lingering for a topic that isn't currently active is enough to
+      // trigger the cleanup, regardless of what the other two say.
       const unlockTime = Number(topicUnlockTime[topicId]) || 0;
-      const stillActive = unlockedTopics.includes(topicId) && unlockTime && (nowTx - unlockTime) < THIRTY_MINUTES;
+      const stillActive = unlockTime > 0 && (nowTx - unlockTime) < THIRTY_MINUTES;
+      const hasStaleData = !stillActive && (
+        unlockedTopics.includes(topicId) ||
+        Object.prototype.hasOwnProperty.call(topicUnlockTime, topicId) ||
+        Object.prototype.hasOwnProperty.call(progress, topicId)
+      );
       let expiredCleanup = false;
-      if (unlockedTopics.includes(topicId) && !stillActive) {
-        // Expired but the cron hasn't cleaned it up yet — do it right now so
+      if (hasStaleData) {
+        // Expired (or orphaned) but not yet cleaned up — do it right now so
         // this watch actually has to earn the full ad count again, instead
         // of short-circuiting as "already unlocked".
         unlockedTopics = unlockedTopics.filter(t => t !== topicId);
@@ -3869,9 +4057,30 @@ app.post('/api/ad-complete', async (req, res) => {
           });
         } catch (deliveryError) {
           console.error('❌ Direct topic delivery error:', deliveryError.message);
-          return res.status(500).json({
-            success: false,
-            error: 'ভিডিও পাঠাতে সমস্যা হয়েছে।'
+          // 🐛 FIX (root cause of "3/3 ads watched but 'unlocked' never
+          // shows"): the ad count was already validated and committed inside
+          // the transaction above BEFORE we ever got here — the user has
+          // genuinely earned the unlock. Previously, if sending the video to
+          // Telegram failed for any reason (rate limit, bot blocked, network
+          // hiccup, etc.), this returned success:false with a 500 status.
+          // The Mini App treated that as "the ad didn't count" and reset the
+          // button back to its original "Xটি অ্যাড দেখে আনলক করুন" text —
+          // even though the topic WAS unlocked in the database. The user
+          // then had to re-watch all the ads for nothing. Never let a
+          // delivery hiccup undo an already-earned unlock in the UI: report
+          // success/unlocked normally, and let the user pull up the bot chat
+          // themselves (or the next successful delivery attempt) to actually
+          // receive the video.
+          const directStartUrl = BOT_USERNAME ? `https://t.me/${BOT_USERNAME}` : null;
+          return res.json({
+            success: true,
+            count: result.count,
+            required: result.required,
+            unlocked: true,
+            directDelivered: false,
+            deliveryError: true,
+            requiresStart: !!directStartUrl,
+            startUrl: directStartUrl || undefined
           });
         }
       }
@@ -4153,6 +4362,66 @@ cron.schedule('0 0 * * *', async () => {
 // watched to make that call — instead of requiring the full ad count again.
 // Now, whenever cleanup expires a topic out of unlockedTopics, we also wipe
 // its adProgress entry so a future watch has to earn the full unlock again.
+// Deletes every due video of ONE user, then updates that user's document in a
+// transaction that re-reads the fresh data — so a video delivered while this
+// was running is never overwritten/forgotten.
+async function cleanupOneUser(docRef, data, now) {
+  const sentMessages = Array.isArray(data.sentMessages) ? data.sentMessages : [];
+  const finished = new Set(); // deleted, or can never be deleted → safe to forget
+  let deleted = 0;
+  let retryNeeded = false;
+
+  for (const msg of sentMessages) {
+    if (!msg || !msg.chatId || !msg.messageId) continue; // unusable entry, dropped below
+    if (dueAtOf(msg) > now) continue; // still inside its 30 minutes
+    const result = await safeDeleteMessage(msg.chatId, msg.messageId);
+    if (result.ok) { deleted++; finished.add(msgKey(msg)); }
+    else if (result.retryable) retryNeeded = true; // temporary failure → keep it, try again soon
+    else finished.add(msgKey(msg));                // already gone / can't be deleted → nothing to retry
+  }
+
+  let updated = false;
+  await db.runTransaction(async tx => {
+    const fresh = await tx.get(docRef);
+    if (!fresh.exists) return;
+    const d = fresh.data() || {};
+
+    const remaining = (Array.isArray(d.sentMessages) ? d.sentMessages : [])
+      .filter(m => m && m.chatId && m.messageId && !finished.has(msgKey(m)));
+
+    const unlockedTopics = Array.isArray(d.unlockedTopics) ? d.unlockedTopics : [];
+    const topicUnlockTime = d.topicUnlockTime || {};
+    const stillUnlocked = unlockedTopics.filter(topicId => {
+      const time = Number(topicUnlockTime[topicId]) || 0;
+      return time && (now - time) < THIRTY_MINUTES;
+    });
+    const expiredTopics = unlockedTopics.filter(t => !stillUnlocked.includes(t));
+
+    const updates = {
+      sentMessages: remaining,
+      cleanupDueAt: retryNeeded ? now + 2 * 60 * 1000 : getCleanupDueAt(remaining)
+    };
+    if (expiredTopics.length) {
+      updates.unlockedTopics = stillUnlocked;
+      // 🐛 FIX: set(..., { merge: true }) MERGES nested maps, so leaving a key
+      // out of the map does NOT remove it from Firestore — the expired
+      // topic's unlock time and (more importantly) its ad progress stayed
+      // pinned at "all ads watched", which is exactly what let a topic be
+      // re-unlocked with a single ad. Deleting keys needs FieldValue.delete().
+      updates.topicUnlockTime = {};
+      updates.adProgress = {};
+      for (const t of expiredTopics) {
+        updates.topicUnlockTime[t] = admin.firestore.FieldValue.delete();
+        updates.adProgress[t] = admin.firestore.FieldValue.delete();
+      }
+    }
+    tx.set(docRef, updates, { merge: true });
+    updated = true;
+  });
+
+  return { deleted, updated };
+}
+
 async function runCleanupPass() {
   if (cleanupRunning) {
     console.log('⏭️ Cleanup already running; skipping this cycle.');
@@ -4166,12 +4435,10 @@ async function runCleanupPass() {
     let totalDeleted = 0;
     let totalUpdated = 0;
     let totalDue = 0;
-    // Loop in pages: if the server was asleep/down for a while (common on
-    // Render's free tier, which spins the dyno down after inactivity), many
-    // users can pile up past their cleanupDueAt before the next request
-    // wakes it back up. A single 200-doc pass could leave a big backlog
-    // undeleted for another 2+ minutes (or longer); keep paging until we're
-    // caught up, with a sane upper bound so one run can't loop forever.
+    // Loop in pages: if the server was asleep/down for a while (a redeploy, or
+    // Render's free tier spinning the dyno down), many users pile up past
+    // their cleanupDueAt. Keep paging until we're caught up, with a sane
+    // upper bound so one run can't loop forever.
     for (let page = 0; page < 25; page++) {
       const snapshot = await db.collection('users')
         .where('cleanupDueAt', '<=', now)
@@ -4182,65 +4449,12 @@ async function runCleanupPass() {
       totalDue += snapshot.size;
 
       for (const doc of snapshot.docs) {
-        const data = doc.data();
-        const sentMessages = Array.isArray(data.sentMessages) ? data.sentMessages : [];
-        const remainingMessages = [];
-        let hadExpired = false;
-        let retryNeeded = false;
-
-        for (const msg of sentMessages) {
-          const sentAt = Number(msg && msg.sentAt) || 0;
-          if (!sentAt || (now - sentAt) < THIRTY_MINUTES) {
-            if (sentAt) remainingMessages.push(msg);
-            continue;
-          }
-          hadExpired = true;
-          const result = await safeDeleteMessage(msg.chatId, msg.messageId);
-          if (result.ok) totalDeleted++;
-          else if (result.retryable) {
-            // Temporary Telegram/API failure: keep the record so a later
-            // cleanup pass can try again instead of losing the message ID.
-            retryNeeded = true;
-            remainingMessages.push(msg);
-          }
-        }
-
-        const unlockedTopics = Array.isArray(data.unlockedTopics) ? data.unlockedTopics : [];
-        const topicUnlockTime = data.topicUnlockTime || {};
-        const stillUnlocked = unlockedTopics.filter(topicId => {
-          const time = Number(topicUnlockTime[topicId]) || 0;
-          return time && (now - time) < THIRTY_MINUTES;
-        });
-        const expiredTopics = unlockedTopics.filter(t => !stillUnlocked.includes(t));
-
-        let nextCleanupAt = null;
-        if (retryNeeded) nextCleanupAt = now + 2 * 60 * 1000;
-        else nextCleanupAt = getCleanupDueAt(remainingMessages);
-
-        const updates = { cleanupDueAt: nextCleanupAt || null };
-        if (hadExpired || remainingMessages.length !== sentMessages.length) {
-          updates.sentMessages = remainingMessages;
-        }
-        if (stillUnlocked.length !== unlockedTopics.length) {
-          updates.unlockedTopics = stillUnlocked;
-        }
-        if (expiredTopics.length) {
-          // Clear the unlock time entries and reset ad progress for topics
-          // that just expired, so a future watch requires the full ad count
-          // again instead of being fast-tracked by stale leftover progress.
-          const newTopicUnlockTime = { ...topicUnlockTime };
-          const newAdProgress = { ...(data.adProgress || {}) };
-          for (const t of expiredTopics) {
-            delete newTopicUnlockTime[t];
-            delete newAdProgress[t];
-          }
-          updates.topicUnlockTime = newTopicUnlockTime;
-          updates.adProgress = newAdProgress;
-        }
-
-        if (Object.keys(updates).length > 1 || Number(data.cleanupDueAt) !== Number(updates.cleanupDueAt)) {
-          await doc.ref.set(updates, { merge: true });
-          totalUpdated++;
+        try {
+          const r = await cleanupOneUser(doc.ref, doc.data(), now);
+          totalDeleted += r.deleted;
+          if (r.updated) totalUpdated++;
+        } catch (userError) {
+          console.error(`❌ Cleanup failed for user ${doc.id}:`, userError.message);
         }
       }
 
@@ -4348,7 +4562,10 @@ async function migrateStaleAdProgress() {
   const markerRef = db.collection('system').doc('cleanup');
   try {
     const marker = await markerRef.get();
-    if (marker.exists && Number(marker.data().adProgressVersion) >= 1) {
+    // v2: the first version of this sweep wrote with set(..., {merge:true}), which
+    // can't delete map keys — so it silently cleared nothing. Re-run once with
+    // real FieldValue.delete() deletes.
+    if (marker.exists && Number(marker.data().adProgressVersion) >= 2) {
       console.log('⏭️ Stale ad-progress migration already done.');
       return;
     }
@@ -4374,18 +4591,18 @@ async function migrateStaleAdProgress() {
         const progress = data.adProgress;
         if (!progress || typeof progress !== 'object') continue;
         const unlockedTopics = Array.isArray(data.unlockedTopics) ? data.unlockedTopics : [];
-        const newProgress = { ...progress };
+        const deletions = {};
         let touched = false;
         for (const topicId of Object.keys(progress)) {
           if (unlockedTopics.includes(topicId)) continue; // currently active — leave it alone
           const required = requiredById.get(topicId) || 1;
           if ((Number(progress[topicId]) || 0) >= required) {
-            delete newProgress[topicId];
+            deletions[topicId] = admin.firestore.FieldValue.delete();
             touched = true;
           }
         }
         if (touched) {
-          batch.set(doc.ref, { adProgress: newProgress }, { merge: true });
+          batch.set(doc.ref, { adProgress: deletions }, { merge: true });
           batchCount++;
           changed++;
         }
@@ -4394,7 +4611,7 @@ async function migrateStaleAdProgress() {
       if (snap.size < 500) break;
     }
 
-    await markerRef.set({ adProgressVersion: 1, adProgressMigratedAt: Date.now() }, { merge: true });
+    await markerRef.set({ adProgressVersion: 2, adProgressMigratedAt: Date.now() }, { merge: true });
     console.log(`✅ Stale ad-progress cleared for ${changed} users.`);
   } catch (error) {
     console.error('❌ Stale ad-progress migration error:', error.message);
@@ -4408,6 +4625,23 @@ async function migrateStaleAdProgress() {
 // ⚠️ গুরুত্বপূর্ণ: একই BOT_TOKEN দিয়ে একাধিক instance চললে polling conflict হয়।
 // এই warning log করি যাতে DEBUG করা সহজ হয়।
 console.log('🤖 Starting bot polling...');
+
+// Run migrations in order, then immediately process every due video. This is
+// what catches videos that became due while the server was down/redeploying.
+// 🐛 FIX: in Telegraf 4.x the promise returned by bot.launch() only settles when
+// polling STOPS, so anything chained on its .then() may never run. These
+// startup tasks now also start from a plain timer, guarded to run only once.
+let startupTasksStarted = false;
+function runStartupTasksOnce() {
+  if (startupTasksStarted) return;
+  startupTasksStarted = true;
+  console.log('🧹 Running startup cleanup tasks...');
+  migrateCleanupSchedule()
+    .then(() => migrateStaleAdProgress())
+    .then(() => runCleanupPass())
+    .catch(e => console.error('❌ Startup cleanup/migration error:', e.message));
+}
+setTimeout(runStartupTasksOnce, 8000);
 
 bot.launch({
   // পুরনো pending update গুলো skip করি, যাতে restart-এর সময় ঝুলে না যায়
@@ -4423,13 +4657,7 @@ bot.launch({
 })
   .then(() => {
     console.log('🤖 Bot started successfully (polling mode)');
-    // Run migrations in order, then immediately process all due videos.
-    // This is important for old users whose sentMessages existed before
-    // cleanupDueAt was introduced.
-    migrateCleanupSchedule()
-      .then(() => migrateStaleAdProgress())
-      .then(() => runCleanupPass())
-      .catch(e => console.error('❌ Startup cleanup/migration error:', e.message));
+    runStartupTasksOnce();
   })
   .catch(err => {
     console.error('❌ Bot start error:', err.message);
@@ -4457,13 +4685,16 @@ app.listen(process.env.PORT || 3000, () => {
 });
 
 // Graceful shutdown — Render restart-এ ঝুলে না যায়
-process.once('SIGINT', () => {
-  console.log('🛑 SIGINT received, stopping bot...');
-  bot.stop('SIGINT');
-  setTimeout(() => process.exit(0), 2000);
-});
-process.once('SIGTERM', () => {
-  console.log('🛑 SIGTERM received, stopping bot...');
-  bot.stop('SIGTERM');
-  setTimeout(() => process.exit(0), 2000);
-});
+async function gracefulExit(signal) {
+  console.log(`🛑 ${signal} received, stopping bot...`);
+  try { bot.stop(signal); } catch (e) {}
+  // Let videos that are mid-delivery finish being sent AND tracked for the
+  // 30-minute deletion before the process goes away (max 10 seconds).
+  const startedAt = Date.now();
+  while (inflightDeliveries > 0 && (Date.now() - startedAt) < 10000) {
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  process.exit(0);
+}
+process.once('SIGINT', () => { gracefulExit('SIGINT'); });
+process.once('SIGTERM', () => { gracefulExit('SIGTERM'); });
