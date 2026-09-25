@@ -802,7 +802,7 @@ async function buildConfiguredPostKeyboard(topicId) {
   const configured = await getPostButtons();
   const rows = [];
   for (const b of configured) {
-    const name = String(b.name || '').trim().slice(0, 60);
+    const name = safeTruncate(String(b.name || '').trim(), 60);
     if (!name) continue;
     let url = String(b.url || '').trim();
     if (url === '{VIDEO_LINK}') url = buildMiniAppTopicUrl(topicId);
@@ -2451,7 +2451,7 @@ bot.action(/^repost_post:(\d+)$/, async ctx => {
   const date = rec.postedAt ? new Date(Number(rec.postedAt)).toLocaleDateString('en-GB') : 'অজানা';
   const media = rec.type === 'photo' ? '🖼️ Photo' : '🎬 Video';
   return ctx.editMessageText(
-    `⚠️ Repost Preview — ঠিক আছে তো?\n\n📢 Channel: ${rec.channelId}\n📦 Type: ${media}\n📅 আগে posted: ${date}\n📝 Caption:\n${String(rec.caption || rec.title || '(Caption নেই)').slice(0, 400)}`,
+    `⚠️ Repost Preview — ঠিক আছে তো?\n\n📢 Channel: ${rec.channelId}\n📦 Type: ${media}\n📅 আগে posted: ${date}\n📝 Caption:\n${safeTruncate(String(rec.caption || rec.title || '(Caption নেই)'), 400)}`,
     Markup.inlineKeyboard([
       [Markup.button.callback('✅ হ্যাঁ, Repost করুন', 'repost_confirm:'+index), Markup.button.callback('❌ বাতিল', 'adm_repost')]
     ])
@@ -2521,7 +2521,7 @@ bot.action(/^repost_confirm:(\d+)$/, async ctx => {
     // it can never appear as a duplicate button.
     await hideFromRepostList(rec.channelId, copied.message_id);
     delete repostData[ctx.from.id];
-    return ctx.reply(`✅ Post আবার Repost হয়েছে (বাটনসহ)।\n\n📢 ${rec.channelId}\n📝 ${String(rec.caption || rec.title || '(Caption নেই)').slice(0, 300)}\n🆔 নতুন Message ID: ${copied.message_id}`, { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup });
+    return ctx.reply(`✅ Post আবার Repost হয়েছে (বাটনসহ)।\n\n📢 ${rec.channelId}\n📝 ${safeTruncate(String(rec.caption || rec.title || '(Caption নেই)'), 300)}\n🆔 নতুন Message ID: ${copied.message_id}`, { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🏠 Admin Panel', 'adm_home')]]).reply_markup });
   } catch (e) {
     console.error('❌ Repost error:', e.message);
     return ctx.reply(`❌ Repost করা যায়নি।\n\n📢 ${rec.channelId}\n🆔 Message ID: ${rec.messageId}\n\n${e.message}`);
@@ -2650,7 +2650,7 @@ bot.command('views', async (ctx) => {
       message += `আজ এখনো কোনো ভিডিও Unlock হয়নি।`;
     } else {
       todayRanking.slice(0, 5).forEach((item, index) => {
-        const safeTitle = item.title.slice(0, 70) || 'নামবিহীন';
+        const safeTitle = safeTruncate(item.title || '', 70) || 'নামবিহীন';
         message += `${index + 1}. ${safeTitle} — ${item.views.toLocaleString('en-US')}\n`;
       });
     }
@@ -2702,7 +2702,7 @@ bot.command('stats', async (ctx) => {
     } else {
       topics.slice(0, 30).forEach((topic, index) => {
         const views = Number(topic.unlockCount || topic.unlocks || topic.views) || 0;
-        const title = String(topic.title || 'নামবিহীন').replace(/\n/g, ' ').slice(0, 70);
+        const title = safeTruncate(String(topic.title || 'নামবিহীন').replace(/\n/g, ' '), 70);
         message += `${index + 1}. ${title}\n`;
         message += `   👁️ ${views} ভিউ\n`;
         message += `   🆔 <code>${topic.id}</code>\n\n`;
@@ -3019,7 +3019,7 @@ async function showBroadcastPreview(ctx, data) {
   if (data.type === 'poll') {
     preview += `❓ প্রশ্ন: ${data.question}\n🔘 অপশন: ${data.options.join(' | ')}`;
   } else {
-    preview += `📝 Message:\n${String(data.message || '(কোনো মেসেজ নেই)').slice(0, 500)}`;
+    preview += `📝 Message:\n${safeTruncate(String(data.message || '(কোনো মেসেজ নেই)'), 500)}`;
   }
   preview += `\n\nএটা সব ইউজারকে পাঠাতে "✅ Confirm" চাপুন, নাহলে "❌ Cancel" চাপুন।`;
   return ctx.reply(preview, Markup.inlineKeyboard([
@@ -3107,7 +3107,7 @@ bot.command('testdb', async (ctx) => {
   try {
     const [topics, users] = await Promise.all([getTopicsCached(), getUserCountsCached()]);
     let reply = `📊 ডেটাবেস রিপোর্ট:\n\n👥 ইউজার: ${users.totalUsers}টি\n📁 টপিক: ${topics.length}টি\n\n`;
-    reply += topics.length ? `📌 প্রথম 20টি টপিক:\n${topics.slice(0,20).map((t,i)=>`${i+1}. ${t.title || 'নামবিহীন'} (${t.id})`).join('\n')}` : '📭 কোনো টপিক নেই।';
+    reply += topics.length ? `📌 প্রথম 20টি টপিক:\n${topics.slice(0,20).map((t,i)=>`${i+1}. ${safeTruncate(t.title || 'নামবিহীন', 70)} (${t.id})`).join('\n')}` : '📭 কোনো টপিক নেই।';
     await ctx.reply(reply);
   } catch (error) { console.error('❌ testdb error:', error); await ctx.reply('❌ ডেটাবেস চেক করতে সমস্যা: ' + error.message); }
 });
