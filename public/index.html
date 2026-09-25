@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#070b16">
+<title>Premium Video</title>
+<link rel="preload" as="image" href="/assets/premium-video-logo.webp" fetchpriority="high">
+<link rel="preconnect" href="https://api.telegram.org" crossorigin>
+<script src="//libtl.com/sdk.js" data-zone="11737734" data-sdk="show_11737734" async></script>
+<script src="https://js.onclckvd.com/in-stream-ad-admanager/tma.js" async></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#070707;
+  --panel:#141010;
+  --panel2:#1b1111;
+  --line:rgba(212,175,55,.16);
+  --text:#f4f7ff;
+  --muted:#8793aa;
+  --cyan:#f3c75f;
+  --blue:#9f1720;
+  --pink:#e6a83f;
+  --green:#e7b84b;
+}
+html,body{min-height:100%;background:var(--bg)}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,Arial,sans-serif;
+  color:var(--text);-webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+button{font:inherit}
+.app-bg{
+  min-height:100vh;
+  background:
+    radial-gradient(circle at 12% 4%,rgba(155,20,28,.24),transparent 31%),
+    radial-gradient(circle at 88% 22%,rgba(242,193,78,.12),transparent 30%),
+    linear-gradient(180deg,#100707 0%,#050505 62%,#090404 100%);
+}
+.splash{
+  position:fixed;inset:0;z-index:10000;background:
+    radial-gradient(circle at 50% 38%,rgba(171,22,30,.22),transparent 34%),
+    radial-gradient(circle at 50% 72%,rgba(242,193,78,.09),transparent 32%),
+    linear-gradient(180deg,#120506 0%,#030303 100%);
+  display:flex;align-items:center;justify-content:center;
+  transition:opacity .45s ease,visibility .45s ease;
+}
+.splash.hide{opacity:0;visibility:hidden;pointer-events:none}
+.splash-inner{text-align:center;animation:splashIn .7s ease both}
+.brand-mark{
+  width:120px;height:120px;border-radius:32px;margin:0 auto 20px;
+  display:grid;place-items:center;position:relative;overflow:hidden;
+  background:#050505;
+  box-shadow:0 18px 60px rgba(120,10,18,.22),0 8px 30px rgba(242,193,78,.10);
+  animation:logoIntro .9s cubic-bezier(.19,1,.22,1) both,
+            logoFloat 2.8s ease-in-out .9s infinite;
+}
+.brand-mark:before{
+  content:"";position:absolute;inset:0;z-index:1;
+  background:radial-gradient(circle at 50% 45%,rgba(180,35,25,.20),transparent 62%);
+  pointer-events:none;
+}
+.brand-ring{
+  position:absolute;inset:-46%;border-radius:50%;opacity:0;pointer-events:none;
+  background:radial-gradient(circle,rgba(242,193,78,.34),transparent 62%);
+  animation:ringPulse 1.5s ease-out .3s both;
+}
+.brand-mark img{
+  width:100%;height:100%;object-fit:cover;display:block;position:relative;z-index:1;
+  filter:saturate(.88) contrast(.94) brightness(.9);
+  animation:logoPulse 2.8s ease-in-out .9s infinite;
+}
+@keyframes logoIntro{0%{opacity:0;transform:scale(.76);filter:blur(6px)}70%{opacity:1;transform:scale(1.05);filter:blur(0)}100%{opacity:1;transform:scale(1);filter:blur(0)}}
+@keyframes ringPulse{0%{opacity:0;transform:scale(.35)}45%{opacity:.7}100%{opacity:0;transform:scale(1.4)}}
+@keyframes logoFloat{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-5px) scale(1.02)}}
+@keyframes logoPulse{0%,100%{opacity:.9}50%{opacity:1}}
+.splash-title{font-size:30px;font-weight:800;letter-spacing:-1px}
+.splash-sub{
+  position:relative;display:inline-block;margin-top:12px;padding:0 10px;
+  color:#f4c95d;font-size:12px;font-weight:900;letter-spacing:5px;text-transform:uppercase;
+  text-shadow:0 0 18px rgba(242,193,78,.28);
+  animation:premiumFade 1.8s ease-in-out infinite;
+}
+.splash-sub:after{
+  content:"";position:absolute;top:0;bottom:0;width:28px;left:-36px;
+  background:linear-gradient(105deg,transparent,rgba(255,255,255,.9),transparent);
+  transform:skewX(-18deg);animation:shineSweep 1.8s ease-in-out infinite;
+  pointer-events:none;
+}
+@keyframes premiumFade{0%,100%{opacity:.45;transform:scale(.985)}50%{opacity:1;transform:scale(1.02)}}
+@keyframes shineSweep{0%,55%{left:-42px;opacity:0}65%{opacity:1}100%{left:calc(100% + 24px);opacity:0}}
+@keyframes splashIn{from{opacity:0;transform:translateY(12px) scale(.97)}to{opacity:1;transform:none}}
+
+.shell{width:min(100%,720px);margin:0 auto;padding-bottom:34px}
+.topbar{
+  position:sticky;top:0;z-index:20;
+  padding:14px 16px calc(12px + env(safe-area-inset-top));
+  background:rgba(8,3,4,.86);backdrop-filter:blur(18px);
+  border-bottom:1px solid var(--line);
+  display:flex;align-items:center;justify-content:space-between;
+}
+.brand{font-size:17px;font-weight:800;letter-spacing:-.3px}
+.brand span{color:var(--cyan)}
+.avatar{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:13px;color:#120707;background:linear-gradient(135deg,var(--cyan),var(--blue));box-shadow:0 8px 25px rgba(120,190,255,.18)}
+.hero{padding:14px 18px 8px}
+.hero .eyebrow{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:var(--cyan);font-weight:700}
+.hero h1{font-size:31px;line-height:1.08;margin-top:7px;letter-spacing:-1.2px}
+.hero p{color:var(--muted);font-size:13px;line-height:1.45;margin-top:7px;max-width:520px}
+.categories{display:flex;gap:8px;padding:6px 18px 14px;overflow-x:auto;scrollbar-width:none}
+.categories::-webkit-scrollbar{display:none}
+.tab{
+  flex:0 0 auto;border:1px solid var(--line);background:rgba(255,255,255,.035);
+  color:var(--muted);border-radius:999px;padding:9px 15px;font-size:12px;font-weight:700;
+}
+.tab.active{color:#130606;background:linear-gradient(135deg,#f6d77b 0%,#e4a93d 48%,#a3151e 100%);border-color:transparent;box-shadow:0 8px 24px rgba(177,30,35,.16)}
+
+#loading{padding:18px}
+.skeleton-grid{display:grid;gap:14px}
+.skeleton-card{height:285px;border-radius:24px;background:linear-gradient(100deg,#141010,#241515,#141010);background-size:300% 100%;animation:shimmer 1.2s infinite;border:1px solid var(--line)}
+@keyframes shimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}
+
+.topic-grid{display:grid;gap:16px;padding:8px 18px 28px}
+.topic-card{
+  background:linear-gradient(145deg,rgba(38,15,18,.98),rgba(12,6,7,.99));
+  border:1px solid var(--line);border-radius:24px;overflow:hidden;
+  box-shadow:0 18px 45px rgba(0,0,0,.18);
+}
+.thumb{position:relative;aspect-ratio:16/9;background:#0a1020;overflow:hidden}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .45s ease}
+.topic-card:active .thumb img{transform:scale(1.02)}
+.thumb-overlay{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.03),rgba(0,0,0,.58))}
+.status-pill{
+  position:absolute;right:12px;top:12px;padding:7px 10px;border-radius:999px;
+  background:rgba(5,9,18,.72);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.12);
+  font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase
+}
+.status-pill.unlocked{color:var(--green)}
+.card-body{padding:16px}
+.title{font-size:18px;line-height:1.3;font-weight:750;letter-spacing:-.35px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.meta{display:flex;gap:16px;margin-top:10px;color:var(--muted);font-size:12px;font-weight:600}
+.meta span{display:flex;align-items:center;gap:5px}
+.dot{width:4px;height:4px;border-radius:50%;background:#53627b}
+.card-btn,.unlock-btn{
+  width:100%;border:0;border-radius:16px;margin-top:15px;padding:14px 16px;
+  font-size:14px;font-weight:800;letter-spacing:.2px;color:#06101a;
+  background:linear-gradient(110deg,#f2c14e,#d84a3a 52%,#7f1717);
+  box-shadow:0 10px 28px rgba(117,169,255,.16);
+}
+.card-btn:active,.unlock-btn:active{transform:scale(.985)}
+.card-btn.unlocked{background:rgba(101,230,176,.10);color:var(--green);border:1px solid rgba(101,230,176,.25);box-shadow:none}
+.card-btn:disabled,.unlock-btn:disabled{opacity:.58}
+
+.single{padding:18px}
+.single-top{display:flex;align-items:center;gap:10px;margin:4px 0 16px}
+.back-btn{border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--text);border-radius:12px;padding:9px 13px;font-weight:700}
+.single-label{font-size:11px;color:var(--cyan);letter-spacing:2px;text-transform:uppercase;font-weight:800}
+.single-card{
+  border:1px solid var(--line);border-radius:28px;overflow:hidden;
+  background:linear-gradient(145deg,rgba(35,18,18,.98),rgba(8,6,6,.99));
+  box-shadow:0 24px 70px rgba(0,0,0,.3)
+}
+.single-thumb{aspect-ratio:16/9;position:relative;background:#080e1d}
+.single-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.single-content{padding:20px}
+.single-title{font-size:24px;line-height:1.2;font-weight:820;letter-spacing:-.7px}
+.single-meta{display:flex;gap:15px;color:var(--muted);font-size:12px;margin-top:11px;font-weight:650}
+.unlock-box{margin-top:22px;padding:16px;border-radius:20px;background:rgba(255,255,255,.035);border:1px solid var(--line)}
+.unlock-caption{font-size:10px;letter-spacing:2.4px;text-transform:uppercase;color:var(--cyan);font-weight:800}
+.unlock-btn{margin-top:11px;font-size:15px;padding:16px}
+.unlock-btn.unlocked{background:rgba(101,230,176,.10);color:var(--green);border:1px solid rgba(101,230,176,.25);box-shadow:none}
+.single-note{text-align:center;color:var(--muted);font-size:11px;line-height:1.5;margin-top:14px}
+
+#ad-overlay{display:none;position:fixed;inset:0;z-index:9999;background:rgba(3,6,13,.97);align-items:center;justify-content:center;padding:22px}
+#ad-overlay.show{display:flex}
+.ad-content{width:min(100%,380px);text-align:center}
+.ad-orb{width:72px;height:72px;border-radius:24px;margin:0 auto 24px;background:linear-gradient(135deg,#f2c14e,#d84a3a,#7f1717);box-shadow:0 16px 50px rgba(220,65,35,.22);animation:pulse 1.8s ease-in-out infinite}
+@keyframes pulse{50%{transform:scale(1.05)}}
+.ad-label{color:var(--muted);font-size:13px}
+.ad-timer{font-size:42px;font-weight:850;margin:16px 0;color:var(--text)}
+.ad-timer span{color:var(--cyan)}
+.ad-skip-btn{display:none}
+.error{padding:28px 18px;text-align:center;color:var(--muted)}
+.empty{padding:40px 18px;text-align:center;color:var(--muted)}
+@media(min-width:600px){.topic-grid{grid-template-columns:1fr 1fr}.hero h1{font-size:38px}}
+
+</style>
+</head>
+<body>
+<div class="app-bg">
+  <div id="splash" class="splash">
+    <div class="splash-inner">
+      <div class="brand-mark"><span class="brand-ring"></span><img src="/assets/premium-video-logo.webp" alt="Premium Video logo" decoding="async" fetchpriority="high" width="768" height="768"></div>
+      <div class="splash-title">Premium Video</div>
+      <div class="splash-sub">Preparing your experience</div>
+      <div class="loader"></div>
+    </div>
+  </div>
+
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand"><span>Premium</span> Video</div>
+      <div class="avatar" id="avatar">U</div>
+    </header>
+
+    <main id="homeView">
+      <section class="hero">
+        <div class="eyebrow">Exclusive content</div>
+        <h1>Watch what you want.</h1>
+        <p>Choose a video, complete the required ads, and unlock your content.</p>
+      </section>
+
+      <nav class="categories" aria-label="Categories">
+        <button class="tab active" data-category="all">সব</button>
+        <button class="tab" data-category="trending">ট্রেন্ডিং</button>
+        <button class="tab" data-category="new">নতুন</button>
+        <button class="tab" data-category="popular">জনপ্রিয়</button>
+      </nav>
+
+      <div id="loading">
+        <div class="skeleton-grid">
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+        </div>
+      </div>
+      <div id="topic-grid" class="topic-grid"></div>
+    </main>
+
+    <main id="singleView" style="display:none">
+      <section class="single">
+        <div class="single-top">
+          <button id="backHome" class="back-btn">← ফিরে যান</button>
+          <div class="single-label">Private content</div>
+        </div>
+        <div id="singleContent"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="ad-overlay">
+    <div class="ad-content">
+      <div class="ad-orb"></div>
+      <div class="ad-label">অ্যাড সম্পূর্ণ হওয়া পর্যন্ত অপেক্ষা করুন</div>
+      <div class="ad-timer"><span id="adTimer">•••</span></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script>
+(function(){
+'use strict';
+
+var tg = null;
+try { tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null; if(tg) tg.ready(); } catch(e){}
+
+var API='/api';
+var topics=[];
+var unlocked={};
+var userHistory=[];
+var activeCategory='all';
+var dailyLimitReached=false;
+var currentTopic=null;
+var isWatching=false;
+var adCompleted=false;
+var adCount=0;
+var currentAdToken=null;
+var totalAds=0;
+var splashShown=false;
+var splashMinDone=false;
+var splashDataReady=false;
+var SPLASH_MIN_MS=1800;   // logo stays fully visible at least this long
+var SPLASH_MAX_MS=4500;   // failsafe: never block the app longer than this
+
+function userId(){
+  try { return tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : null; } catch(e){ return null; }
+}
+function userName(){
+  try { return tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? (tg.initDataUnsafe.user.first_name || 'U') : 'U'; } catch(e){ return 'U'; }
+}
+function esc(v){
+  return String(v == null ? '' : v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});
+}
+function qs(name){
+  try { return new URLSearchParams(location.search).get(name); } catch(e){ return null; }
+}
+function startParam(){
+  try {
+    if(tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) return tg.initDataUnsafe.start_param;
+  } catch(e){}
+  return qs('topic') || qs('startapp') || null;
+}
+
+function maybeHideSplash(){
+  if(!splashShown || !splashMinDone || !splashDataReady) return;
+  document.getElementById('splash').classList.add('hide');
+}
+function showSplash(){
+  if(splashShown) return;
+  splashShown=true;
+  setTimeout(function(){ splashMinDone=true; maybeHideSplash(); },SPLASH_MIN_MS);
+  // Safety net: if data somehow never resolves, still let the user in.
+  setTimeout(function(){ splashDataReady=true; maybeHideSplash(); },SPLASH_MAX_MS);
+}
+function markSplashDataReady(){
+  splashDataReady=true;
+  maybeHideSplash();
+}
+
+document.getElementById('avatar').textContent=userName().charAt(0).toUpperCase();
+
+function timeOf(t){var x=t&&t.createdAt?new Date(t.createdAt).getTime():0;return Number.isFinite(x)?x:0}
+function viewsOf(t){return Math.max(0,Number(t&&t.unlockCount)||0)}
+function recentOf(t){
+  var list=Array.isArray(t&&t.recentUnlocks)?t.recentUnlocks:[];
+  var cut=Date.now()-7*86400000;
+  return list.reduce(function(n,v){var x=typeof v==='number'?v:new Date(v).getTime();return n+(Number.isFinite(x)&&x>=cut?1:0)},0)
+}
+function hashString(str){
+  var h=2166136261;
+  for(var i=0;i<str.length;i++){h^=str.charCodeAt(i);h+=((h<<1)+(h<<4)+(h<<7)+(h<<8)+(h<<24));}
+  return (h>>>0);
+}
+function seededScore(key){return (hashString(String(key))%10000)/10000;}
+function titleTokens(text){
+  var stop={the:1,and:1,for:1,with:1,this:1,that:1,video:1,ভিডিও:1,এর:1,এবং:1,একটি:1,এই:1,ও:1};
+  return String(text||'').toLowerCase().replace(/[^a-z0-9\u0980-\u09ff]+/g,' ').split(/\s+/).filter(function(x){return x.length>1&&!stop[x]});
+}
+function buildHistoryContext(){
+  var historyIds={}; userHistory.forEach(function(id){historyIds[String(id)]=true});
+  var pref={};
+  userHistory.forEach(function(id){
+    var ht=topics.find(function(x){return String(x.id)===String(id)});
+    if(ht) titleTokens(ht.title||'').forEach(function(tok){pref[tok]=(pref[tok]||0)+1;});
+  });
+  return {historyIds:historyIds,pref:pref};
+}
+// Rotation window: how often each user's personalized order reshuffles.
+var ROTATION_WINDOW_MS=2*60*60*1000;
+
+// Use the SERVER's clock for the window boundaries. If a phone's clock is
+// wrong, its 2-hour windows would start at the wrong moment (and differ from
+// everyone else's). Only corrected when the phone is clearly off (>2 min).
+var serverSkewMs=0;
+function nowMs(){return Date.now()+serverSkewMs;}
+function noteServerTime(resp){
+  try{
+    var d=resp && resp.headers && resp.headers.get('Date');
+    var t=d?new Date(d).getTime():NaN;
+    if(Number.isFinite(t)){
+      var skew=t-Date.now();
+      serverSkewMs=Math.abs(skew)>120000?skew:0;
+    }
+  }catch(e){}
+}
+function rotationKey(){
+  return Math.floor(nowMs()/ROTATION_WINDOW_MS);
+}
+
+// Uniform number strictly between 0 and 1, fixed for a given key.
+function seededUnit(key){return ((hashString(String(key))%1000003)+1)/1000005;}
+
+// How much a video should be "favoured" for THIS user, in soft points.
+// (Not-yet-watched, fresh, popular and similar-to-what-they-watched all help.)
+var RANK_TEMPERATURE=25;
+function affinityPoints(t,ctx){
+  var q=0;
+  if(ctx.historyIds[String(t.id)]) q-=50;             // already watched → far less likely to lead
+  var age=Math.max(0,nowMs()-timeOf(t));
+  if(age<24*3600000) q+=30;
+  else if(age<72*3600000) q+=18;
+  else if(age<7*86400000) q+=8;
+  q+=Math.min(12,Math.log1p(viewsOf(t))*2);          // popularity, capped
+  var overlap=0;
+  titleTokens(t.title).forEach(function(tok){if(ctx.pref[tok]) overlap+=Math.min(3,ctx.pref[tok]);});
+  q+=Math.min(14,overlap*3.5);                       // similar to what they watched
+  if(viewsOf(t)<ctx.avgViews) q+=5;                  // under-exposed videos get a standing boost
+  return q;
+}
+
+// Weighted RANDOM order (Efraimidis–Spirakis), seeded by user + 2-hour window:
+//  • every user gets a different order (the seed contains their user id),
+//  • the whole order reshuffles when the 2-hour window changes,
+//  • it stays perfectly stable inside a window (no jumping on re-render),
+//  • better-fitting videos are simply more LIKELY to be near the top.
+// The old version added a small random number (max ~28 points) to big fixed
+// bonuses (up to 72 for "not watched", 30 for "new" …), so the top of the list
+// was the same for everybody and barely moved when the window changed.
+function rankKey(t,ctx){
+  if(unlocked[t.id]) return -1e9;                    // currently unlocked → sink to the bottom
+  var w=Math.exp(affinityPoints(t,ctx)/RANK_TEMPERATURE);
+  var uid=userId()||'guest';
+  var u=seededUnit(uid+'|'+ctx.rotationKey+'|'+t.id);
+  return Math.log(u)/w;
+}
+function sortTopics(){
+  var a=topics.slice();
+  if(activeCategory==='popular'){
+    a.sort(function(x,y){return viewsOf(y)-viewsOf(x)||timeOf(y)-timeOf(x)});
+  }else if(activeCategory==='trending'){
+    a.sort(function(x,y){
+      var sx=recentOf(x)*1000+viewsOf(x), sy=recentOf(y)*1000+viewsOf(y);
+      return sy-sx||timeOf(y)-timeOf(x);
+    });
+  }else if(activeCategory==='new'){
+    a.sort(function(x,y){return timeOf(y)-timeOf(x)}); a=a.slice(0,20);
+  }else{
+    // Score every topic exactly once (was previously recomputed from scratch
+    // — including a full re-scan of watch history — inside the sort
+    // comparator itself, on every single comparison; that got noticeably
+    // slower as the video library and a user's history both grew).
+    var ctx=buildHistoryContext();
+    ctx.avgViews=a.length?a.reduce(function(s,x){return s+viewsOf(x)},0)/a.length:0;
+    ctx.rotationKey=rotationKey();
+    var scored=a.map(function(t,i){return {t:t,i:i,s:rankKey(t,ctx)}});
+    scored.sort(function(x,y){return y.s-x.s||x.i-y.i});
+    a=scored.map(function(x){return x.t});
+  }
+  return a;
+}
+
+function renderHome(){
+  var grid=document.getElementById('topic-grid'), loading=document.getElementById('loading');
+  var sorted=sortTopics();
+  loading.style.display='none';
+  grid.innerHTML='';
+  if(!sorted.length){grid.innerHTML='<div class="empty">এখনো কোনো ভিডিও পাওয়া যায়নি।</div>';return;}
+
+  sorted.forEach(function(t,i){
+    var id=esc(t.id), title=esc(t.title||'নামবিহীন ভিডিও');
+    var count=Math.max(1,Number(t.videoCount)||0);
+    var views=viewsOf(t);
+    var ads=Math.max(1,Number(t.adsRequired)||1);
+    var isUnlocked=!!unlocked[t.id];
+    // 🐛 FIX: this always showed "(0/ads)" for a locked topic, even when the
+    // server already has real partial progress for it (window.adProgress,
+    // from /api/user-unlocked) — e.g. the user watched 1 of 3 ads, closed
+    // the app, and came back. The button looked like it had forgotten their
+    // progress even though the server hadn't. Show the real starting count.
+    var startCount=Math.min(ads,Math.max(0,Number((window.adProgress||{})[t.id])||0));
+    var thumb=t.thumbnail ? API+'/thumbnail/'+encodeURIComponent(t.thumbnail) : '';
+    var img=thumb ? '<img src="'+thumb+'" alt="'+title+'" loading="'+(i<4?'eager':'lazy')+'" decoding="async" onerror="this.style.display=\'none\'">' : '';
+    var btn=isUnlocked
+      ? '<button class="card-btn unlocked" disabled>CONTENT UNLOCKED</button>'
+      : dailyLimitReached
+        ? '<button class="card-btn" disabled>আজকের Ad Limit শেষ</button>'
+        : '<button class="card-btn unlock-card" data-id="'+id+'">('+startCount+'/'+ads+') Ads</button>';
+
+    var card=document.createElement('article');
+    card.className='topic-card';
+    card.innerHTML=
+      '<div class="thumb">'+img+'<div class="thumb-overlay"></div>'+
+      '<div class="status-pill '+(isUnlocked?'unlocked':'')+'">'+(isUnlocked?'UNLOCKED':'PREMIUM')+'</div></div>'+
+      '<div class="card-body"><div class="title">'+title+'</div>'+
+      '<div class="meta"><span>Views '+views+'</span><span class="dot"></span><span>'+count+' '+(count===1?'Video':'Videos')+'</span></div>'+
+      btn+'</div>';
+    grid.appendChild(card);
+  });
+
+  grid.querySelectorAll('.unlock-card').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      var t=topics.find(function(x){return String(x.id)===String(btn.dataset.id)});
+      if(t) startAds(t,btn);
+    });
+  });
+}
+
+
+function renderSingle(topic){
+  var home=document.getElementById('homeView'), single=document.getElementById('singleView');
+  home.style.display='none'; single.style.display='block';
+  var box=document.getElementById('singleContent');
+  var id=String(topic.id), title=esc(topic.title||'নামবিহীন ভিডিও');
+  var count=Math.max(1,Number(topic.videoCount)||0);
+  var views=viewsOf(topic), ads=Math.max(1,Number(topic.adsRequired)||1);
+  var thumb=topic.thumbnail ? API+'/thumbnail/'+encodeURIComponent(topic.thumbnail) : '';
+  var img=thumb ? '<img src="'+thumb+'" alt="'+title+'">' : '';
+  var unlockedNow=!!unlocked[id];
+  // 🐛 FIX: same real-progress fix as renderHome() — see comment there.
+  var startCount=Math.min(ads,Math.max(0,Number((window.adProgress||{})[id])||0));
+  var button=unlockedNow
+    ? '<button id="singleUnlock" class="unlock-btn unlocked" disabled>CONTENT UNLOCKED</button>'
+    : dailyLimitReached
+      ? '<button id="singleUnlock" class="unlock-btn" disabled>আজকের Ad Limit শেষ</button>'
+      : '<button id="singleUnlock" class="unlock-btn">('+startCount+'/'+ads+') Ads</button>';
+
+  box.innerHTML=
+    '<article class="single-card">'+
+      '<div class="single-thumb">'+img+'<div class="thumb-overlay"></div></div>'+
+      '<div class="single-content">'+
+        '<div class="single-title">'+title+'</div>'+
+        '<div class="single-meta"><span>Views '+views+'</span><span>'+count+' '+(count===1?'Video':'Videos')+'</span></div>'+
+        '<div class="unlock-box"><div class="unlock-caption">Access required</div>'+button+
+        '<div class="single-note">Complete the required rewarded ads to unlock this content.</div></div>'+
+      '</div>'+
+    '</article>';
+
+  var b=document.getElementById('singleUnlock');
+  if(b && !unlockedNow && !dailyLimitReached) b.addEventListener('click',function(){startAds(topic,b)});
+}
+
+function openHome(){
+  syncRotationOnResume();
+  currentTopic=null;
+  document.getElementById('singleView').style.display='none';
+  document.getElementById('homeView').style.display='block';
+  try { if(tg && tg.BackButton) tg.BackButton.hide(); } catch(e){}
+  // Deep-link opens skip the Home list for speed. If the user goes back,
+  // load the Home list only now (instead of rendering an empty array).
+  if(!topics.length){
+    document.getElementById('loading').style.display='block';
+    document.getElementById('loading').innerHTML='<div class="skeleton-grid"><div class="skeleton-card"></div><div class="skeleton-card"></div></div>';
+    loadHome();
+  }else{
+    renderHome();
+  }
+}
+function openSingleById(id){
+  if(!id){openHome();return Promise.resolve()}
+  return fetch(API+'/topic/'+encodeURIComponent(id))
+    .then(function(r){if(!r.ok)throw new Error('Topic not found');return r.json()})
+    .then(function(topic){
+      if(!topic || !topic.id) throw new Error('Topic not found');
+      currentTopic=topic;
+      renderSingle(topic);
+      try { if(tg && tg.BackButton){tg.BackButton.show();tg.BackButton.onClick(openHome);} } catch(e){}
+    })
+    .catch(function(e){
+      document.getElementById('homeView').style.display='none';
+      document.getElementById('singleView').style.display='block';
+      document.getElementById('singleContent').innerHTML='<div class="error">এই ভিডিওটি পাওয়া যায়নি।<br><br><button class="back-btn" onclick="location.reload()">ফিরে যান</button></div>';
+    });
+}
+
+var unlockExpiresAt={}; // topicId -> ms timestamp when that unlock's 30-min window ends
+var relockTimer=null;
+
+function loadUnlocked(){
+  var uid=userId();
+  if(!uid){renderHome();return Promise.resolve();}
+  return fetch(API+'/user-unlocked/'+encodeURIComponent(uid))
+    .then(function(r){if(!r.ok)throw new Error('status');return r.json()})
+    .then(function(data){
+      dailyLimitReached=Number(data.dailyUsed||0)>=Number(data.dailyLimit||15);
+      unlocked={};
+      (data.topics||[]).forEach(function(id){unlocked[id]=true});
+      userHistory=Array.isArray(data.history)?data.history:(data.topics||[]);
+      window.adProgress=Object.assign({},data.adProgress||{});
+      unlockExpiresAt=data.expiresAt||{};
+      scheduleLocalRelockCheck();
+      renderHome();
+      var singleVisible=document.getElementById('singleView').style.display==='block';
+      if(currentTopic&&singleVisible)renderSingle(currentTopic);
+    }).catch(function(){renderHome()});
+}
+
+// 🐛 FIX (the real Firestore-quota-at-scale problem — NOT the ad/unlock
+// flow): the app used to poll `/api/user-unlocked/:userId` (1 Firestore
+// read) every 60 SECONDS for every single open Mini App instance, purely to
+// notice when a 30-minute unlock window ended — completely independent of
+// how many ads anyone actually watched. At real scale (hundreds/thousands
+// of people just sitting with the app open) that alone burns through a
+// daily read quota in minutes. The server already tells us exactly WHEN
+// each unlock expires (`expiresAt`) on the one read we already do — so
+// instead of asking again and again "has it expired yet?", just set a
+// local timer for the exact moment it will, and relock in the UI right
+// then with ZERO extra server calls. The periodic server poll below is now
+// only a rare safety net (clock drift, missed timers), not how expiry is
+// actually detected.
+function scheduleLocalRelockCheck(){
+  if(relockTimer){clearTimeout(relockTimer);relockTimer=null;}
+  var now=Date.now();
+  var soonest=null;
+  Object.keys(unlockExpiresAt).forEach(function(topicId){
+    var at=Number(unlockExpiresAt[topicId]);
+    if(Number.isFinite(at) && at>now && (soonest===null || at<soonest)) soonest=at;
+  });
+  if(soonest===null) return; // nothing currently unlocked — nothing to schedule
+  var delay=Math.max(500,soonest-now+250); // small buffer past the exact boundary
+  relockTimer=setTimeout(function(){
+    relockTimer=null;
+    var now2=Date.now();
+    var changed=false;
+    Object.keys(unlockExpiresAt).forEach(function(topicId){
+      var at=Number(unlockExpiresAt[topicId]);
+      if(Number.isFinite(at) && at<=now2 && unlocked[topicId]){
+        delete unlocked[topicId];
+        delete unlockExpiresAt[topicId];
+        changed=true;
+      }
+    });
+    if(changed){
+      renderHome();
+      var singleVisible=document.getElementById('singleView').style.display==='block';
+      if(currentTopic&&singleVisible)renderSingle(currentTopic);
+    }
+    scheduleLocalRelockCheck(); // re-arm for the next-soonest expiry, if any
+  },delay);
+}
+
+function loadHome(){
+  return fetch(API+'/topics')
+    .then(function(r){if(!r.ok)throw new Error('topics');noteServerTime(r);return r.json()})
+    .then(function(data){topics=Array.isArray(data)?data:[];renderHome();return loadUnlocked()})
+    .catch(function(){
+      document.getElementById('loading').innerHTML='<div class="error">ভিডিও লোড করতে সমস্যা হয়েছে। আবার চেষ্টা করুন।</div>';
+    });
+}
+
+// Personalized rotation is calculated in 2-hour windows.  Previously the
+// score changed at the boundary, but the already-open Mini App never
+// re-rendered, so users could stay on the old order indefinitely.  Refresh
+// exactly at the next rotation boundary, then re-arm for the following one.
+var rotationRefreshTimer=null;
+var lastRenderedRotationKey=rotationKey();
+function scheduleRotationRefresh(){
+  if(rotationRefreshTimer) clearTimeout(rotationRefreshTimer);
+  var now=nowMs();
+  var nextBoundary=(Math.floor(now/ROTATION_WINDOW_MS)+1)*ROTATION_WINDOW_MS;
+  var delay=Math.max(1000,nextBoundary-now+150);
+  rotationRefreshTimer=setTimeout(function(){
+    rotationRefreshTimer=null;
+    var currentKey=rotationKey();
+    if(currentKey!==lastRenderedRotationKey){
+      lastRenderedRotationKey=currentKey;
+      var homeVisible=document.getElementById('homeView').style.display!=='none';
+      var modalVisible=document.getElementById('modal') && document.getElementById('modal').classList.contains('show');
+      // Never interrupt an ad/modal or a single-video screen.  The next
+      // boundary will be picked up when the user returns to Home.
+      if(homeVisible && !modalVisible && !isWatching){
+        loadHome().catch(function(e){console.warn('Rotation refresh failed:',e);});
+      }
+    }
+    scheduleRotationRefresh();
+  },delay);
+}
+function syncRotationOnResume(){
+  var currentKey=rotationKey();
+  if(currentKey!==lastRenderedRotationKey){
+    lastRenderedRotationKey=currentKey;
+    if(document.getElementById('homeView').style.display!=='none' && !isWatching){
+      loadHome().catch(function(e){console.warn('Rotation resume refresh failed:',e);});
+    }
+  }
+  scheduleRotationRefresh();
+}
+scheduleRotationRefresh();
+document.addEventListener('visibilitychange',function(){
+  if(document.visibilityState==='visible') syncRotationOnResume();
+});
+
+// Safety net only (clock drift, a missed local timer, another device
+// unlocking something) — actual relocking is now handled instantly and
+// locally by scheduleLocalRelockCheck() above with zero server calls, so
+// this can be far less frequent than before (was every 60s, then every 5min).
+//
+// 🐛 FIX (real remaining Firestore-quota drain at scale): this timer used to
+// keep firing every 5 minutes even while the Mini App was minimized/in the
+// background — Telegram's WebView does NOT suspend JS timers just because
+// the user switched to another chat, so anyone who opened the app and left
+// it running in the background all day was silently costing 1 Firestore
+// read every 5 minutes for the ENTIRE time it sat backgrounded, for zero
+// benefit (nothing is shown to them while it's not visible). At real user
+// counts this "invisible" background polling — not the ad/unlock flow
+// itself — is what was actually burning through the daily quota. Now it
+// only runs while the tab is actually visible, and at 15 minutes instead of
+// 5 (4x fewer calls again on top of that), since it's genuinely just a
+// clock-drift/multi-device safety net.
+setInterval(function(){
+  if(document.visibilityState==='visible' && !isWatching && userId()) loadUnlocked().catch(function(){});
+}, 15 * 60 * 1000);
+
+// Ad rotation: odd attempts (1st, 3rd, 5th...) use Monetag, even attempts
+// (2nd, 4th, 6th...) use OnClickA. `adCount` is already the server-confirmed
+// number of ads completed so far FOR THIS TOPIC (see startAds()), so keying
+// the rotation off it gives a per-topic/per-user counter for free — no extra
+// tracking needed. adCount===0 → 1st attempt → Monetag; adCount===1 → 2nd
+// attempt → OnClickA; etc.
+var ONCLICKA_SPOT_ID='6152245';
+var onclickaShowFn=null;
+var onclickaInitPromise=null;
+function initOnclicka(){
+  if(onclickaShowFn) return Promise.resolve(onclickaShowFn);
+  if(onclickaInitPromise) return onclickaInitPromise;
+  if(typeof window.initCdTma!=='function'){
+    // The tma.js tag loads with `async`, so it can easily still be mid-flight
+    // the first time this runs. Deliberately DON'T cache this as
+    // onclickaInitPromise — an uncached rejection means the next call (e.g.
+    // the warm-up call below, or the real showNetworkAd('onclicka') call
+    // later) checks window.initCdTma fresh instead of being stuck forever on
+    // an early "not loaded yet" result.
+    return Promise.reject(new Error('OnClickA SDK not loaded'));
+  }
+  onclickaInitPromise=window.initCdTma({id:ONCLICKA_SPOT_ID}).then(function(show){
+    onclickaShowFn=show;
+    return show;
+  }).catch(function(e){
+    onclickaInitPromise=null; // allow a later retry instead of staying stuck on this rejection
+    throw e;
+  });
+  return onclickaInitPromise;
+}
+// Kick off OnClickA init as soon as the script is ready, so `onclickaShowFn`
+// is usually already warm by the time an ad is actually needed — this
+// mirrors how Monetag's own SDK auto-initializes as soon as its script tag
+// loads (see the show_11737734 tag above).
+initOnclicka().then(function(){
+  console.log('🟢 [AD-DEBUG] OnClickA init OK — SDK loaded and ready (Spot '+ONCLICKA_SPOT_ID+').');
+}).catch(function(e){
+  console.warn('🔴 [AD-DEBUG] OnClickA init FAILED at page load (will retry when an ad is actually needed):',e);
+});
+function pickAdNetwork(){
+  return (adCount%2===0)?'monetag':'onclicka';
+}
+function showNetworkAd(network){
+  if(network==='onclicka'){
+    if(typeof onclickaShowFn==='function'){
+      console.log('🟡 [AD-DEBUG] Calling OnClickA show() (SDK was already initialized)...');
+      return onclickaShowFn();
+    }
+    // Not initialized yet (script still loading, or the first init attempt
+    // failed) — try once more; if this rejects too, the caller's fallback
+    // (the other network) kicks in exactly like any other ad failure.
+    console.log('🟡 [AD-DEBUG] OnClickA not initialized yet — retrying initCdTma() now...');
+    return initOnclicka().then(function(show){
+      console.log('🟡 [AD-DEBUG] Late OnClickA init succeeded — calling show() now...');
+      return show();
+    });
+  }
+  var adFn=window.show_11737734;
+  if(typeof adFn!=='function') return Promise.reject(new Error('Monetag not ready'));
+  return Promise.resolve(adFn());
+}
+
+// Mirrors the server's MIN_AD_DURATION_MS (see bot.js /api/ad-complete).
+// Keeping the exact same number here means a genuinely-watched ad NEVER
+// gets rejected by the server for looking "too fast" — the client simply
+// waits out the remainder before asking the server to record it, instead of
+// firing immediately, getting a timing rejection, and forcing the user to
+// watch a whole extra ad just to retry. This was the other real cause of
+// "had to watch/close twice for one ad to count."
+var AD_MIN_WATCH_MS=10000;
+// Hard ceiling so the button can never get stuck on "Preparing Ad…" forever
+// (e.g. an ad SDK whose promise never resolves or rejects). If nothing has
+// happened by this point, the attempt is abandoned and the user can retry.
+var AD_WATCH_TIMEOUT_MS=45000;
+var adWatchTimer=null;
+function clearAdWatchTimer(){
+  if(adWatchTimer){clearTimeout(adWatchTimer);adWatchTimer=null;}
+}
+
+function startAds(topic,button){
+  if(isWatching) return;
+  if(dailyLimitReached) return;
+  currentTopic=topic;
+  totalAds=Math.max(1,parseInt(topic.adsRequired,10)||1);
+  // 🐛 FIX: start from the real server-side progress instead of always 0 —
+  // see the renderHome()/renderSingle() fix above for why this matters.
+  adCount=Math.min(totalAds,Math.max(0,Number((window.adProgress||{})[topic.id])||0));
+  isWatching=true;adCompleted=false;
+  if(button){button.disabled=true;button.textContent='Preparing Ad…';}
+
+  fetch(API+'/ad-start',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({userId:userId(),topicId:topic.id})
+  }).then(function(r){return r.json()}).then(function(startData){
+    if(!startData||!startData.success){resetAd(startData&&startData.error||'Ad শুরু করা যায়নি');return}
+    var myToken=startData.token;
+    var myTopicId=String(topic.id);
+    var myStartedAt=Date.now();
+    currentAdToken=myToken;
+    // Which network to use for THIS attempt comes from the server
+    // (startData.network) — a global, atomically-incremented rotation
+    // counter (see /api/ad-start in bot.js), not the client's own adCount.
+    // adCount is per-topic and is 0 at the start of almost every topic
+    // (most topics only need 1 ad to unlock), so a client-side "adCount%2"
+    // rotation would pick Monetag every single time. pickAdNetwork() below
+    // is kept only as a defensive fallback in case an old server response
+    // (or a network hiccup) doesn't include `network`.
+    var myNetwork=startData.network||pickAdNetwork();
+    console.log('🎯 [AD-DEBUG] This attempt will try: '+myNetwork+' (server said: '+(startData.network||'nothing, used client fallback')+')');
+
+    var overlay=document.getElementById('ad-overlay');
+    overlay.classList.add('show');
+    document.getElementById('adTimer').textContent='•••';
+
+    clearAdWatchTimer();
+    adWatchTimer=setTimeout(function(){
+      if(myToken===currentAdToken){
+        resetAd('⚠️ Ad লোড হতে অনেক সময় লাগছে। আবার চেষ্টা করুন।');
+      }
+    },AD_WATCH_TIMEOUT_MS);
+
+    function handleResult(result){
+      // Security: if the ad network's own redirect (clicking the ad opens an
+      // external link) caused this promise to only resolve LATE — after the
+      // user backgrounded/closed the Mini App and later started a completely
+      // fresh ad attempt for the same or another topic — this result belongs
+      // to that old, abandoned attempt. It must never be allowed to count
+      // toward whatever attempt is currently active; silently discard it.
+      if(myToken!==currentAdToken || !currentTopic || String(currentTopic.id)!==myTopicId){
+        console.warn('Ignoring stale ad result from an abandoned attempt.');
+        return;
+      }
+      clearAdWatchTimer();
+      if(result && result.done===false){resetAd('⚠️ Ad সম্পূর্ণ দেখা হয়নি, তাই এটা count হয়নি। আবার চেষ্টা করুন।');return}
+      adCompleted=true;
+      // Make sure at least AD_MIN_WATCH_MS has actually elapsed before we
+      // ever ask the server to record this — see AD_MIN_WATCH_MS above.
+      var elapsed=Date.now()-myStartedAt;
+      var wait=Math.max(0,AD_MIN_WATCH_MS-elapsed);
+      setTimeout(function(){
+        if(myToken!==currentAdToken){return}
+        recordAd(button,myToken);
+      },wait);
+    }
+
+    var network=myNetwork;
+    try{
+      showNetworkAd(network).then(function(result){
+        console.log('✅ [AD-DEBUG] '+network+' show() SUCCEEDED — this ad was actually served by '+network+'.');
+        handleResult(result);
+      }).catch(function(e){
+        console.warn('🔴 [AD-DEBUG] '+network+' show() FAILED/REJECTED — falling back to the other network. Reason:',e);
+        if(myToken!==currentAdToken) return;
+        // One network being down/out of fill (e.g. OnClickA's own daily
+        // per-user cap kicking in and its Promise rejecting) shouldn't block
+        // unlocking — silently retry with the other network instead. The
+        // user never sees an error or a broken button either way; this
+        // fallback attempt still counts as one normal ad-progress step,
+        // since recordAd()/`/api/ad-complete` below don't know or care which
+        // network actually served the ad.
+        var fallback=network==='onclicka'?'monetag':'onclicka';
+        console.log('🎯 [AD-DEBUG] Fallback attempt will try: '+fallback);
+        showNetworkAd(fallback).then(function(result){
+          console.log('✅ [AD-DEBUG] Fallback '+fallback+' show() SUCCEEDED.');
+          handleResult(result);
+        }).catch(function(e2){
+          console.error('🔴 [AD-DEBUG] Fallback '+fallback+' ALSO FAILED:',e2);
+          if(myToken!==currentAdToken) return;
+          resetAd('⚠️ এই মুহূর্তে কোনো Ad পাওয়া যায়নি। একটু পর আবার চেষ্টা করুন।');
+        });
+      });
+    }catch(e){console.error(e);resetAd('⚠️ এই মুহূর্তে কোনো Ad পাওয়া যায়নি। একটু পর আবার চেষ্টা করুন।')}
+  }).catch(function(e){console.error(e);resetAd('Ad শুরু করা যায়নি')});
+}
+
+async function recordAd(button,token){
+  if(!adCompleted||!isWatching||!currentTopic)return;
+  adCompleted=false;
+  document.getElementById('ad-overlay').classList.remove('show');
+  try{
+    var r=await fetch(API+'/ad-complete',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({userId:userId(),topicId:currentTopic.id,token:token||currentAdToken})
+    });
+    currentAdToken=null;
+    var data=await r.json();
+    if(data.limitReached){
+      dailyLimitReached=true;isWatching=false;
+      if(button){button.disabled=true;button.textContent='আজকের Ad Limit শেষ'}
+      var msg='আজকের Ad Limit শেষ। আগামীকাল আবার আসুন।';
+      if(tg&&tg.showAlert)tg.showAlert(msg);else alert(msg);
+      return;
+    }
+    if(!r.ok||!data.success)throw new Error(data.error||'failed');
+    if(data.requiresStart && data.startUrl){
+      isWatching=false;
+      // Update the button + refresh unlocked state FIRST — if the redirect
+      // below doesn't actually leave the Mini App (this can silently do
+      // nothing on Telegram when the Mini App was opened from inside the bot
+      // itself, rather than from a channel post — same chat, so there's
+      // nothing to "switch" to), the user should still see "CONTENT
+      // UNLOCKED" instead of being stuck on "Preparing Ad…" forever.
+      if(button)button.textContent='CONTENT UNLOCKED';
+      loadUnlocked();
+      try{
+        if(tg && tg.openTelegramLink){
+          tg.openTelegramLink(data.startUrl);
+          // Force the Mini App itself to close so Telegram is forced to bring
+          // the bot chat to the front — this is what actually triggers the
+          // "new message" notification. openTelegramLink alone can silently
+          // no-op when the target is the same chat the Mini App was launched
+          // from (i.e. opened via the bot's own Menu Button).
+          if(tg.close) setTimeout(function(){tg.close()},300);
+        } else {
+          window.location.href=data.startUrl;
+        }
+      }catch(redirectError){
+        // If openTelegramLink itself throws (older client versions, odd
+        // WebView states, etc.) never leave the user stranded on a page
+        // that merely says "unlocked" — always fall back to a plain
+        // navigation so they still land in the bot chat.
+        console.error('Redirect to bot chat failed, falling back:',redirectError);
+        window.location.href=data.startUrl;
+      }
+      return;
+    }
+    adCount=Number(data.count)||0;
+    totalAds=Number(data.required)||totalAds;
+    if(button){button.textContent=data.unlocked?'CONTENT UNLOCKED':'('+adCount+'/'+totalAds+') Ads';button.disabled=false;}
+    if(data.unlocked){
+      isWatching=false;
+      await loadUnlocked();
+      return;
+    }
+    // Do NOT auto-start the next ad. Ad-network policies generally require a
+    // genuine, separate user click before each ad — chaining them
+    // automatically is both against those policies and risks the account
+    // being flagged. The button is re-enabled above so the user taps it
+    // themselves for the next one.
+    isWatching=false;
+    showAdProgressToast(adCount,totalAds);
+  }catch(e){
+    console.error('Ad completion error',e);
+    // Surface the server's own reason (e.g. "সম্পূর্ণ দেখা হয়নি" from the
+    // 14s minimum-duration check) instead of a generic message, so the user
+    // actually understands why the ad didn't count.
+    resetAd(e && e.message && e.message!=='failed' ? '⚠️ '+e.message : '⚠️ Ad সম্পূর্ণ হয়নি বা সার্ভারে সমস্যা হয়েছে। আবার চেষ্টা করুন।');
+  }
+}
+
+function showAdProgressToast(count,total){
+  var t=document.createElement('div');
+  t.textContent='✅ '+count+'/'+total+' Ad সম্পন্ন হয়েছে — বাকিটার জন্য আবার বাটনে ক্লিক করুন';
+  t.style.cssText='position:fixed;left:50%;bottom:88px;transform:translateX(-50%);'+
+    'background:rgba(18,18,22,.95);color:#fff;padding:10px 16px;border-radius:12px;'+
+    'font-size:12.5px;line-height:1.4;z-index:9999;box-shadow:0 10px 28px rgba(0,0,0,.4);'+
+    'max-width:86%;text-align:center;opacity:0;transition:opacity .25s ease;pointer-events:none';
+  document.body.appendChild(t);
+  requestAnimationFrame(function(){t.style.opacity='1';});
+  setTimeout(function(){
+    t.style.opacity='0';
+    setTimeout(function(){t.remove();},300);
+  },2400);
+}
+
+function resetAd(message){
+  clearAdWatchTimer();
+  document.getElementById('ad-overlay').classList.remove('show');
+  isWatching=false;adCompleted=false;
+  if(message){
+    if(tg&&tg.showAlert)tg.showAlert(message);else alert(message);
+  }
+  if(currentTopic){
+    var b=document.getElementById('singleUnlock');
+    if(b&&!unlocked[currentTopic.id]&&!dailyLimitReached){
+      // 🐛 FIX: this used to always reset to "(0/total)" on any failed ad
+      // attempt (timeout, network hiccup, ad SDK error) — even if the user
+      // had already banked real progress (e.g. 2 of 3 ads done, the 3rd
+      // attempt glitched). That wiped the visible count back to zero even
+      // though the server still had their earlier ads counted, making it
+      // look like all progress was lost. Show the real known count instead.
+      b.disabled=false;b.textContent='('+adCount+'/'+totalAds+') Ads';
+    }
+    renderHome();
+  }
+}
+
+document.querySelectorAll('.tab').forEach(function(tab){
+  tab.addEventListener('click',function(){
+    document.querySelectorAll('.tab').forEach(function(x){x.classList.remove('active')});
+    tab.classList.add('active');
+    activeCategory=tab.dataset.category||'all';
+    renderHome();
+  });
+});
+document.getElementById('backHome').addEventListener('click',openHome);
+
+// If the user leaves the Mini App mid-ad (e.g. taps through the ad's own
+// click-out link to an external site) and either doesn't come back, or
+// comes back but the ad SDK's promise never settles, don't leave the button
+// stuck disabled forever. Give it a few seconds grace after returning, then
+// let them try again — this never counts anything by itself, it only
+// unblocks a retry.
+document.addEventListener('visibilitychange',function(){
+  if(document.visibilityState==='visible' && isWatching){
+    var tokenAtPause=currentAdToken;
+    setTimeout(function(){
+      if(isWatching && currentAdToken===tokenAtPause){
+        resetAd('⚠️ Ad সম্পূর্ণ হয়নি। আবার চেষ্টা করুন।');
+      }
+    },6000);
+  }
+});
+
+showSplash();
+var deepTopicId = startParam();
+
+// Deep link opens the single-video page without loading the full Home topics list.
+// Both requests start immediately and run in parallel; the Home list is fetched only if
+// the user later taps Back/Home.
+if (deepTopicId) {
+  Promise.all([loadUnlocked(), openSingleById(deepTopicId)]).then(markSplashDataReady).catch(markSplashDataReady);
+} else {
+  loadHome().then(markSplashDataReady).catch(markSplashDataReady);
+}
+
+})();
+</script>
+</body>
+</html>
